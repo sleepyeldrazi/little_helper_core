@@ -230,4 +230,43 @@ See [RESEARCH.md](RESEARCH.md) for full synthesis. Key papers:
 
 ---
 
+## Future Features
+
+### Script Tool (Programmatic Tool Calling)
+
+Inspired by Anthropic's "programmatic tool calling" — instead of making many separate
+`run`/`search` calls (each burning a round-trip and dumping raw output into context),
+the model writes a small Python script that does everything in one shot.
+
+**Why it matters for context efficiency:**
+
+Instead of this (3 round-trips, ~4KB raw output hitting context):
+```
+Step 1: run("find . -name '*.cs' | head -50")        → 50 lines
+Step 2: run("grep -rn 'TODO' src/ | head -30")        → 30 lines
+Step 3: run("wc -l src/*.cs | sort -rn | head -10")   → 10 lines
+```
+
+The model writes this (1 round-trip, ~200 chars of filtered output):
+```python
+import os
+for root, dirs, files in os.walk("src"):
+    for f in files:
+        if f.endswith(".cs"):
+            path = os.path.join(root, f)
+            lines = open(path).readlines()
+            todos = [i+1 for i,l in enumerate(lines) if "TODO" in l]
+            if todos:
+                print(f"{path}: {len(lines)} lines, TODOs at {todos}")
+```
+
+**Implementation sketch:**
+- New `script` tool alongside read/run/write/search/bash
+- Injected helpers: `run(cmd)` and `run_lines(cmd)` for shell access
+- Only `print()` output is returned to the model — intermediate results stay in the script
+- 8KB output cap, 120s timeout
+- Saves both round-trips and context pollution
+
+---
+
 *Built on the ashes of asgard-core. Less code, more working.*
