@@ -1,6 +1,6 @@
-# little_helper
+# little_helper_core
 
-A lean agent harness for small/local models (7B–27B parameters). General-purpose — coding tasks are a primary focus, but not the only one.
+A lean agent harness for small/local/cloud models. General-purpose — coding tasks are a primary focus, but not the only one.
 
 **Design principle:** Get out of the model's way. The model knows what to do — give it tools, stay silent, observe the result.
 
@@ -23,102 +23,199 @@ No lanes, no ownership resolution, no prompt file loading, no tool-blind mode, n
 
 ---
 
+## Source Files
+
+```
+src/
+  Agent.cs              — FSM loop: Planning→Executing→Observing→Done, stall detection
+  ModelClient.cs        — OpenAI-compatible HTTP client, JSON repair, fuzzy tool matching
+  Tools.cs              — 5 tools: read, run, write, search, bash
+  ToolSchemas.cs        — JSON schema definitions, normalization (additionalProperties: false)
+  Types.cs              — Records: ChatMessage, ModelResponse, AgentResult, AgentConfig
+  Skills.cs             — SkillDiscovery: SKILL.md parsing, XML formatting for prompt
+  PromptBuilder.cs      — System prompt construction, skill injection, context building
+  Compaction.cs         — Context window management, token estimation, message pruning
+  ModelConfig.cs        — Multi-provider config from ~/.little_helper/models.json
+  ConfigResolver.cs     — CLI args + config file → resolved endpoint/model/key
+  MessageSerializer.cs  — ChatMessage → OpenAI API JSON (includes reasoning_content)
+  JsonRepair.cs         — Extract/fix JSON from model output (code fences, prefixes, etc.)
+  ShellExecutor.cs      — Safe shell command execution via bash -c
+  SessionLogger.cs      — JSONL session logs to ~/.little_helper/logs/
+  Program.cs            — CLI: positional prompt, models/skills subcommands
+```
+
+---
+
+## Multi-Provider Support
+
+Models are configured in `~/.little_helper/models.json`:
+
+```json
+{
+  "default_model": "qwen3:14b",
+  "providers": {
+    "ollama": {
+      "base_url": "http://localhost:11434/v1",
+      "models": [{ "id": "qwen3:14b", "context_window": 32768 }]
+    },
+    "openrouter-extra": {
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key": "sk-or-...",
+      "headers": { "HTTP-Referer": "..." },
+      "models": [{ "id": "openai/gpt-oss-120b", "context_window": 128000 }]
+    }
+  }
+}
+```
+
+Usage: `little_helper_core -m qwen3:14b "prompt"` or `little_helper_core -m openrouter-extra/openai/gpt-oss-120b "prompt"`
+
+---
+
+## Thinking/Reasoning Capture
+
+Thinking models (Kimi K2.5, DeepSeek, Ollama thinking models) are fully supported:
+
+- `message.reasoning_content` (Kimi K2.5, DeepSeek) — captured and roundtripped in conversation history
+- `message.thinking` (Ollama) — captured
+- `usage.completion_tokens_details.reasoning_tokens` (OpenAI o1/o3) — captured
+- Thinking tokens estimated from content length when API doesn't report them
+- All thinking accumulated in `ModelClient.ThinkingLog` and `AgentResult.ThinkingLog`
+
+**Important:** Kimi K2.5 requires `reasoning_content` on ALL assistant messages when thinking mode is active. The `MessageSerializer` handles this automatically.
+
+---
+
+## Session Logs
+
+Every run writes a JSONL log to `~/.little_helper/logs/`:
+
+```
+20260410_001234_k2p5.jsonl
+```
+
+One JSON object per line:
+- `session_start` — model, working directory, timestamp
+- `step` — tokens, thinking content, tool call count, response preview
+- `tool` — name, args summary, result preview, file path, duration_ms
+- `session_end` — success/fail, total tokens, thinking tokens, files changed, duration
+
+```bash
+# Inspect a session
+cat ~/.little_helper/logs/*.jsonl | jq 'select(.type=="tool") | {tool, args, duration_ms}'
+```
+
+---
+
+## Anthropic API (Future)
+
+Providers with `"api_type": "anthropic"` are recognized but not yet supported. See `ProviderConfig.ApiType` docs in `ModelConfig.cs` for implementation notes covering the full Anthropic Messages API differences.
+
+---
+
 ## Design Rules (Non-Negotiable)
 
 Each rule addresses a failure mode found in delta-code or confirmed by agent research.
 
 ### 1. One System Message, Under 1000 Tokens
 
-"Lost in the Middle" shows 30%+ degradation on buried content. pi-mono's best results come from ~1000 tokens. Delta-code sent 7 system messages — the model followed the wrong one.
-
-```
-You are a helpful assistant. You have access to tools: read, run, write, search.
-Use them to complete the task. When done, say DONE.
-```
+"Lost in the Middle" shows 30%+ degradation on buried content.
 
 ### 2. 5 Tools Maximum
 
-`read`, `run`, `write`, `search`, `bash` (alias). Hermes loads 31 tools → 14K tokens overhead → no room for context. Small models can't reliably select from 31 tools.
+`read`, `run`, `write`, `search`, `bash` (alias). Small models can't reliably select from more.
 
 ### 3. No File Listing Extraction
 
-The model uses `write("path", content)`. We write it. Done. Delta-code tried to parse file listings from model text output then validate with a Go parser — it rejected outputs that were 99% correct but had a missing closing brace.
+The model uses `write("path", content)`. We write it. Done.
 
 ### 4. Verification via Skills, Not Core Loop
 
-Verification is handled through skills, not baked into the agent loop. Delta-code verified every turn, then fed errors back as a "repair prompt" that told the model NOT to use tools — the #1 cause of "reads files but never writes" failures. The model reads a `verify` skill when it wants to run build/test commands. The core loop knows nothing about verification — it just calls the model and executes tools.
+The `verify` skill handles build/test. The core loop knows nothing about verification.
 
 ### 5. Stall = 5 Repeated Observations
 
-Kill the loop after 5 identical tool outcomes. Models often need 3–4 reads to understand a codebase before editing. Delta-code killed after 3 — too aggressive.
+Kill the loop after 5 identical tool outcomes.
 
 ### 6. No Truncation of Tool Output
 
-Full file reads, full command output. Context compaction handles overflow. Delta-code truncated to 4K chars — the model literally couldn't see the line it needed to edit. #3 cause of failures.
+Full file reads, full command output. Context compaction handles overflow.
 
 ### 7. State Machine, Not Free-Form Loop
 
-StateFlow research: FSM yields 63.73% success vs 40.3% for ReAct. Explicit error states prevent infinite wandering.
+StateFlow research: FSM yields 63.73% success vs 40.3% for ReAct.
 
 ```
 PLANNING → EXECUTING → OBSERVING → (loop or → DONE)
-                                ↘ ERROR_RECOVERY → EXECUTING (max 2)
+                              ↘ ERROR_RECOVERY → EXECUTING (max 2)
 ```
 
 ### 8. Files ≤ 300 Lines, Single Responsibility
 
-Delta-code had 993-line god files. Agents couldn't read them in one turn. If a file grows past 300 lines, split it.
+If a file grows past 300 lines, split it.
 
 ---
 
-## Keep from delta-code
+## CLI Usage
 
-1. **Skills as extension mechanism** — on-demand prompt injection for specialized tasks (verification, etc.)
-2. **Git-based change detection** — `git diff --stat`
-3. **Archetype concept** — pre-made project templates for greenfield tasks
-4. **Control service pattern** — safe shell command execution
+```
+little_helper_core [options] <prompt>
+little_helper_core models [--init]
+little_helper_core skills
 
----
+Options:
+  -m, --model <model>              Model name or provider/model
+  -e, --endpoint <url>             Override endpoint URL
+  -d, --dir <path>                 Working directory
+  -c, --context <tokens>           Max context tokens
+  -s, --max-steps <n>              Maximum agent steps [default: 30]
+  -b, --block-destructive          Block destructive commands
+  -t, --temperature <temp>         Sampling temperature
 
-## Drop from delta-code
-
-Lane type hierarchy (8→0), workspace backend abstraction (3→1), prompt file loading, tool-blind mode, whole-file listing extraction, delegation/watchdog/stall-detection, planner's 8+ task classifications, `{identified_files}` placeholder resolution, repair budget tracking, error fingerprinting, the entire `autonomy/` (28 files), `runtime/` (12 files), and `planner/` (9 files) packages.
-
----
-
-## Target: 3–5K LOC, C#/.NET
-
-See [LANGUAGE_ANALYSIS.md](LANGUAGE_ANALYSIS.md) for the full argument. Summary: AutoCodeBench shows C# outscores Go by 5–15pp across all model sizes. For agent-maintained code, that's the deciding factor.
-
-| Component | Lines | Responsibility |
-|-----------|-------|----------------|
-| Program.cs | ~200 | CLI + HTTP server |
-| Agent.cs | ~400 | Core loop (state machine) |
-| Tools.cs | ~400 | read, run, write, search |
-| ModelClient.cs | ~300 | OpenAI-compatible API client |
-| Skills.cs | ~100 | Skill discovery & prompt formatting |
-| Compaction.cs | ~200 | Context window management |
-| Types.cs | ~200 | Records, enums, result types |
-| Tests | ~800 | Unit + integration |
-| **Total** | **~2600** | |
+Examples:
+  little_helper_core "Fix the null reference in UserService.cs"
+  little_helper_core -m k2p5 "Explain the architecture"
+  little_helper_core -m openrouter-extra/openai/gpt-oss-120b "Write tests"
+  echo "prompt" | little_helper_core -m qwen3:8b
+```
 
 ---
 
-## delta-code Post-Mortem (Why It Failed)
+## TUI Integration
 
-Every failure was the pipeline getting in its own way:
+The TUI ([little_helper_tui](https://github.com/sleepyeldrazi/little_helper_tui)) references core as a git submodule and wraps it with adapter classes:
 
-| Failure | Root Cause |
-|---------|-----------|
-| Model doesn't write files | Prompt files override hardcoded prompts with "provide explanations" |
-| Model can't see target line | 4K truncation on file reads |
-| Model stalls after 3 reads | Aggressive stall detection |
-| Repair makes it worse | Repair prompt says "don't use tools" |
-| Verification empty | Greenfield fingerprint has no package manager yet |
-| Bootstrap doesn't install deps | archetype.Apply only writes files |
-| Ownership resolution fails | `{identified_files}` hard-fails on empty |
+```
+little_helper_tui/
+  core/                  <- git submodule (read-only, bump on core release)
+  src/
+    Adapters/            <- TUI-specific wrappers around core types
+      AgentRunner.cs     <- wraps Agent with events, pause/resume, streaming
+      SessionManager.cs  <- loads JSONL logs, resume/branch conversations
+      ModelPool.cs       <- multi-model switching, arena mode
+    TUI.cs               <- terminal frontend
+```
 
-The common theme: layers of abstraction that each introduce failure modes, interacting in ways that compound.
+Adapters are TUI-owned. When an adapter needs something core doesn't expose (e.g. `Agent.ToolExecuted` event, or `Agent.Pause()`), that becomes a core feature request. Flow:
+
+1. TUI adapter hits a wall
+2. Add extension point to core, push
+3. Bump submodule pointer in TUI
+4. Adapter works
+
+Core stays clean — no TUI dependencies.
+
+---
+
+## Build & Test
+
+```bash
+dotnet build                    # 0 warnings, 0 errors
+dotnet test                     # 62 passed, 2 skipped (integration)
+
+dotnet publish src -c Release -r linux-x64 \
+  --self-contained true -p:PublishSingleFile=true
+```
 
 ---
 
