@@ -73,7 +73,7 @@ class Agent
                     step++;
                     Log($"[Step {step}] Model responded ({response.TokensUsed} tokens, {response.ToolCalls.Count} tool calls)");
 
-                    messages.Add(ChatMessage.Assistant(response.Content, response.ToolCalls));
+                    messages.Add(ChatMessage.Assistant(response.Content, response.ToolCalls, response.ThinkingContent));
 
                     if (response.ToolCalls.Count == 0)
                     {

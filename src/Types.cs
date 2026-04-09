@@ -60,6 +60,8 @@ record SkillDef(string Name, string Description, string FilePath);
 
 /// <summary>
 /// A single message in the conversation. Different constructors for different roles.
+/// Assistant messages may carry ReasoningContent from thinking models (Kimi K2.5, DeepSeek).
+/// This MUST be serialized back as reasoning_content, or thinking-mode APIs reject the request.
 /// </summary>
 record ChatMessage
 {
@@ -68,15 +70,18 @@ record ChatMessage
     public List<ToolCall>? ToolCalls { get; init; }
     public string? ToolCallId { get; init; }
     public ToolResult? ToolResult { get; init; }
+    public string? ReasoningContent { get; init; }
 
     private ChatMessage(string role, string? content, List<ToolCall>? toolCalls,
-                        string? toolCallId, ToolResult? toolResult)
+                        string? toolCallId, ToolResult? toolResult,
+                        string? reasoningContent = null)
     {
         Role = role;
         Content = content;
         ToolCalls = toolCalls;
         ToolCallId = toolCallId;
         ToolResult = toolResult;
+        ReasoningContent = reasoningContent;
     }
 
     /// <summary>System message with instructions.</summary>
@@ -87,9 +92,10 @@ record ChatMessage
     public static ChatMessage User(string content) =>
         new("user", content, null, null, null);
 
-    /// <summary>Assistant message with optional text and tool calls.</summary>
-    public static ChatMessage Assistant(string? content, List<ToolCall>? toolCalls = null) =>
-        new("assistant", content, toolCalls, null, null);
+    /// <summary>Assistant message with optional text, tool calls, and reasoning.</summary>
+    public static ChatMessage Assistant(string? content, List<ToolCall>? toolCalls = null,
+        string? reasoningContent = null) =>
+        new("assistant", content, toolCalls, null, null, reasoningContent);
 
     /// <summary>Tool result message tied to a specific tool call.</summary>
     public static ChatMessage FromToolResult(string toolCallId, ToolResult result) =>

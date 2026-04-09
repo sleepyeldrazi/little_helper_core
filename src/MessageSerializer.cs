@@ -20,6 +20,12 @@ static class MessageSerializer
             if (msg.Content != null)
                 entry["content"] = msg.Content;
 
+            // Kimi K2.5 / DeepSeek: must include reasoning_content on assistant messages
+            // when the model operates in thinking mode, or the API rejects the request.
+            // Always include it if present (null = omit from JSON).
+            if (msg.Role == "assistant" && msg.ReasoningContent != null)
+                entry["reasoning_content"] = msg.ReasoningContent;
+
             if (msg.ToolCalls != null && msg.ToolCalls.Count > 0)
             {
                 entry["tool_calls"] = msg.ToolCalls.Select(tc => new Dictionary<string, object?>
