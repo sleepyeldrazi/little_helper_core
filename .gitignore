@@ -1,1 +1,26 @@
-# private
+## .NET
+bin/
+obj/
+out/
+*.user
+*.suo
+*.cache
+*.dll
+*.pdb
+*.exe
+
+## IDE
+.vs/
+.idea/
+*.swp
+*~
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Project
+src/bin/
+src/obj/
+tests/bin/
+tests/obj/
