@@ -267,7 +267,8 @@ class Program
             ToolSchemas.RegisterAll(modelClient);
 
             var toolExecutor = new ToolExecutor(config.WorkingDirectory, blockDestructive);
-            var agent = new Agent(config, modelClient, toolExecutor, skills);
+            using var logger = new SessionLogger(config.ModelName, config.WorkingDirectory);
+            var agent = new Agent(config, modelClient, toolExecutor, skills, logger);
             var cts = new CancellationTokenSource();
 
             Console.CancelKeyPress += (sender, e) =>
@@ -301,6 +302,7 @@ class Program
             {
                 Console.WriteLine($"Thinking tokens: ~{modelClient.TotalThinkingTokens} ({modelClient.ThinkingLog.Count} steps)");
             }
+            Console.WriteLine($"Session log: {logger.LogPath}");
             return result.Success ? 0 : 1;
         }
         catch (OperationCanceledException)

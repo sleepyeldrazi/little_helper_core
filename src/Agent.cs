@@ -14,13 +14,15 @@ class Agent
     private readonly SkillDiscovery _skills;
     private readonly Compaction _compactor;
     private readonly PromptBuilder _promptBuilder;
+    private readonly SessionLogger? _logger;
     private List<string> _filesChanged;
 
     // Stall detection: circular buffer of recent observations
     private string?[] _recentObservations;
     private int _observationIndex;
 
-    public Agent(AgentConfig config, ModelClient modelClient, ToolExecutor toolExecutor, SkillDiscovery skills)
+    public Agent(AgentConfig config, ModelClient modelClient, ToolExecutor toolExecutor,
+        SkillDiscovery skills, SessionLogger? logger = null)
     {
         _config = config;
         _modelClient = modelClient;
@@ -28,6 +30,7 @@ class Agent
         _skills = skills;
         _compactor = new Compaction(config);
         _promptBuilder = new PromptBuilder(config, skills);
+        _logger = logger;
         _filesChanged = new List<string>();
         _recentObservations = new string?[config.StallThreshold];
         _observationIndex = 0;
@@ -72,6 +75,8 @@ class Agent
                     var response = await _modelClient.Complete(messages, ct);
                     step++;
                     Log($"[Step {step}] Model responded ({response.TokensUsed} tokens, {response.ToolCalls.Count} tool calls)");
+                    _logger?.Step(step, response.TokensUsed, response.ThinkingTokens,
+                        response.ToolCalls.Count, response.ThinkingContent, response.Content);
 
                     messages.Add(ChatMessage.Assistant(response.Content, response.ToolCalls, response.ThinkingContent));
 
@@ -96,14 +101,24 @@ class Agent
 
                     foreach (var toolCall in toolCalls)
                     {
-                        Log($"  Executing tool: {toolCall.Name}");
+                        var detail = FormatToolDetail(toolCall.Name, toolCall.Arguments);
+                        Log($"  {toolCall.Name} {detail}");
+                        var sw = System.Diagnostics.Stopwatch.StartNew();
                         var result = await _toolExecutor.Execute(toolCall.Name, toolCall.Arguments);
+                        sw.Stop();
                         messages.Add(ChatMessage.FromToolResult(toolCall.Id, result));
+
+                        _logger?.ToolCall(toolCall.Name, detail,
+                            result.Output, result.IsError, result.FilePath, sw.ElapsedMilliseconds);
 
                         if (result.IsError)
                         {
                             hadError = true;
-                            Log($"  Tool error: {result.Output[..Math.Min(200, result.Output.Length)]}");
+                            Log($"  ERROR: {result.Output[..Math.Min(200, result.Output.Length)]}");
+                        }
+                        else if (!string.IsNullOrEmpty(result.FilePath))
+                        {
+                            Log($"  -> {result.FilePath}");
                         }
 
                         if (!string.IsNullOrEmpty(result.FilePath) &&
@@ -172,6 +187,9 @@ class Agent
 
         Log($"[Done] Steps: {step}, Tokens: {_modelClient.TotalTokensUsed}, Thinking: {_modelClient.TotalThinkingTokens}, Success: {state == AgentState.Done}");
 
+        _logger?.End(state == AgentState.Done, step, _modelClient.TotalTokensUsed,
+            _modelClient.TotalThinkingTokens, _filesChanged);
+
         return new AgentResult(
             Success: state == AgentState.Done,
             Output: finalOutput,
@@ -223,4 +241,30 @@ class Agent
 
     /// <summary>Log a message to stderr for debugging/progress tracking.</summary>
     private static void Log(string message) => Console.Error.WriteLine(message);
+
+    /// <summary>
+    /// Format tool arguments into a short human-readable summary for logging.
+    /// read -> path, write -> path, run/bash -> command, search -> pattern.
+    /// </summary>
+    private static string FormatToolDetail(string toolName, System.Text.Json.JsonElement args)
+    {
+        try
+        {
+            return toolName.ToLowerInvariant() switch
+            {
+                "read" => args.TryGetProperty("path", out var p) ? p.GetString() ?? "" : "",
+                "write" => args.TryGetProperty("path", out var w) ? w.GetString() ?? "" : "",
+                "run" or "bash" => args.TryGetProperty("command", out var c) ? Truncate(c.GetString() ?? "", 80) : "",
+                "search" => args.TryGetProperty("pattern", out var s) ? $"\"{s.GetString()}\"" : "",
+                _ => args.GetRawText()[..Math.Min(60, args.GetRawText().Length)]
+            };
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    private static string Truncate(string s, int maxLen) =>
+        s.Length <= maxLen ? s : s[..maxLen] + "...";
 }
