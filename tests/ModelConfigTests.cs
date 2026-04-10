@@ -34,6 +34,69 @@ public class ModelConfigTests
     }
 
     [Fact]
+    public void Resolve_HeadersFlowThrough()
+    {
+        var config = new ModelConfig
+        {
+            Providers = new Dictionary<string, ProviderConfig>
+            {
+                ["openrouter"] = new()
+                {
+                    BaseUrl = "https://openrouter.ai/api/v1",
+                    ApiKey = "sk-test",
+                    ApiType = "openai",
+                    Headers = new Dictionary<string, string>
+                    {
+                        ["HTTP-Referer"] = "https://example.com",
+                        ["X-Title"] = "little_helper"
+                    },
+                    Models = new List<ModelEntry>
+                    {
+                        new() { Id = "gpt-4", ContextWindow = 128000 }
+                    }
+                }
+            }
+        };
+
+        var result = config.Resolve("gpt-4");
+        Assert.NotNull(result);
+        Assert.NotNull(result.Headers);
+        Assert.Equal(2, result.Headers!.Count);
+        Assert.Equal("https://example.com", result.Headers["HTTP-Referer"]);
+        Assert.Equal("little_helper", result.Headers["X-Title"]);
+    }
+
+    [Fact]
+    public void Resolve_ByProviderSlashModelId_HeadersFlowThrough()
+    {
+        var config = new ModelConfig
+        {
+            Providers = new Dictionary<string, ProviderConfig>
+            {
+                ["openrouter"] = new()
+                {
+                    BaseUrl = "https://openrouter.ai/api/v1",
+                    ApiKey = "sk-test",
+                    Headers = new Dictionary<string, string>
+                    {
+                        ["HTTP-Referer"] = "https://example.com"
+                    },
+                    ApiType = "openai",
+                    Models = new List<ModelEntry>
+                    {
+                        new() { Id = "gpt-4", ContextWindow = 128000 }
+                    }
+                }
+            }
+        };
+
+        var result = config.Resolve("openrouter/gpt-4");
+        Assert.NotNull(result);
+        Assert.NotNull(result.Headers);
+        Assert.Equal("https://example.com", result.Headers!["HTTP-Referer"]);
+    }
+
+    [Fact]
     public void Resolve_ByProviderSlashModelId_UsesSpecificProvider()
     {
         var config = new ModelConfig

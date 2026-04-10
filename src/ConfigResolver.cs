@@ -33,17 +33,6 @@ public static class ConfigResolver
             var contextWindow = maxContextArg > 0 ? maxContextArg : resolved.ContextWindow;
             var temperature = temperatureArg > 0 ? temperatureArg : resolved.Temperature;
 
-            // Find provider headers
-            Dictionary<string, string>? headers = null;
-            foreach (var (_, prov) in modelConfig.Providers)
-            {
-                if (prov.BaseUrl.TrimEnd('/') == resolved.BaseUrl.TrimEnd('/') && prov.Headers != null)
-                {
-                    headers = prov.Headers;
-                    break;
-                }
-            }
-
             // Warn if using an unsupported API type
             if (resolved.ApiType != "openai")
             {
@@ -53,7 +42,7 @@ public static class ConfigResolver
                     "See ProviderConfig.ApiType docs in ModelConfig.cs for implementation notes.");
             }
 
-            return new ResolvedConfig(modelId, endpoint, apiKey, headers, contextWindow, temperature, resolved.ApiType);
+            return new ResolvedConfig(modelId, endpoint, apiKey, resolved.Headers, contextWindow, temperature, resolved.ApiType);
         }
 
         // Not in config — use CLI defaults or hardcoded defaults

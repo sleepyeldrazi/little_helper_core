@@ -37,7 +37,7 @@ public class ModelConfig
                 {
                     return new ResolvedModel(
                         provider.BaseUrl, modelId, provider.ApiKey ?? "",
-                        model.ContextWindow, model.Temperature, provider.ApiType);
+                        model.ContextWindow, model.Temperature, provider.ApiType, provider.Headers);
                 }
             }
 
@@ -47,7 +47,7 @@ public class ModelConfig
             {
                 return new ResolvedModel(
                     provider.BaseUrl, modelId, provider.ApiKey ?? "",
-                    provider.DefaultContextWindow, provider.DefaultTemperature, provider.ApiType);
+                    provider.DefaultContextWindow, provider.DefaultTemperature, provider.ApiType, provider.Headers);
             }
 
             return null;
@@ -61,7 +61,7 @@ public class ModelConfig
             {
                 return new ResolvedModel(
                     provider.BaseUrl, model.Id, provider.ApiKey ?? "",
-                    model.ContextWindow, model.Temperature, provider.ApiType);
+                    model.ContextWindow, model.Temperature, provider.ApiType, provider.Headers);
             }
         }
 
@@ -201,4 +201,5 @@ public class ModelEntry
 }
 
 /// <summary>Resolved model ready for use: endpoint + model id + api key + settings + API type.</summary>
-public record ResolvedModel(string BaseUrl, string ModelId, string ApiKey, int ContextWindow, double Temperature, string ApiType = "openai");
+public record ResolvedModel(string BaseUrl, string ModelId, string ApiKey, int ContextWindow,
+    double Temperature, string ApiType = "openai", Dictionary<string, string>? Headers = null);
