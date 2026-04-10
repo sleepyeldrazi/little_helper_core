@@ -109,7 +109,15 @@ public class AnthropicClient : IModelClient
 
             JsonElement? response;
             if (enableStreaming && observer != null)
+            {
                 response = await AnthropicStreaming.SendStreaming(_http, _endpoint, requestBody, observer, ct);
+                if (response == null && observer != null)
+                {
+                    observer.OnError("[Streaming failed, retrying without streaming]");
+                    var nonStreamBody = BuildRequestBody(apiMessages, systemPrompt, toolSchemas, enableStreaming: false);
+                    response = await SendRequest(nonStreamBody, ct);
+                }
+            }
             else
                 response = await SendRequest(requestBody, ct);
 
