@@ -64,10 +64,11 @@ public class ModelClient : IDisposable
     /// Send a chat completion request with tool definitions.
     /// Retries on malformed responses (up to maxRetries times).
     /// Retries append hints to the last user message (not system messages).
-    /// If observer is provided, streaming is enabled and chunks are forwarded via OnStreamChunk.
+    /// If enableStreaming is true, uses SSE and forwards deltas via the observer.
+    /// If enableStreaming is false (default), uses standard request/response.
     /// </summary>
     public async Task<ModelResponse> Complete(List<ChatMessage> messages, CancellationToken ct = default,
-        int maxRetries = 3, IAgentObserver? observer = null)
+        int maxRetries = 3, IAgentObserver? observer = null, bool enableStreaming = false)
     {
         var toolSchemas = BuildToolSchemas();
 
@@ -75,12 +76,19 @@ public class ModelClient : IDisposable
         {
             ct.ThrowIfCancellationRequested();
 
-            var requestBody = BuildRequestBody(messages, toolSchemas, observer != null);
+            var requestBody = BuildRequestBody(messages, toolSchemas, enableStreaming);
             JsonElement? response;
 
-            if (observer != null)
+            if (enableStreaming)
             {
-                response = await ModelStreaming.SendStreaming(_http, _endpoint, requestBody, observer, ct);
+                response = await ModelStreaming.SendStreaming(_http, _endpoint, requestBody, observer!, ct);
+                // Fallback: if streaming failed or returned empty, retry without streaming
+                if (response == null && observer != null)
+                {
+                    observer.OnError("[Streaming failed, retrying without streaming]");
+                    var nonStreamBody = BuildRequestBody(messages, toolSchemas, streaming: false);
+                    response = await SendRequest(nonStreamBody, ct);
+                }
             }
             else
             {

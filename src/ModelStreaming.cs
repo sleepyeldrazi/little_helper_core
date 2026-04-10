@@ -32,6 +32,25 @@ internal static class ModelStreaming
                 return null;
             }
 
+            // Check Content-Type: if the API doesn't support streaming, it returns
+            // application/json instead of text/event-stream. Fall back gracefully.
+            var contentType = response.Content.Headers.ContentType?.MediaType ?? "";
+            if (contentType.Contains("application/json") && !contentType.Contains("event-stream"))
+            {
+                // Non-SSE response — the API ignored stream:true or doesn't support it.
+                // Parse it as a regular response directly.
+                var json = await response.Content.ReadAsStringAsync(ct);
+                try
+                {
+                    return JsonDocument.Parse(json).RootElement;
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"Failed to parse non-streaming response: {ex.Message}");
+                    return null;
+                }
+            }
+
             // Accumulators for the full response
             var fullContent = new StringBuilder();
             var fullThinking = new StringBuilder();
