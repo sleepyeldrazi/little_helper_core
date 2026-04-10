@@ -55,20 +55,22 @@ public class AnthropicClient : IModelClient
     /// <summary>
     /// Known Anthropic model context windows. Anthropic has no API to query this.
     /// Falls back to config value if model is not in this table.
+    /// Updated: April 2026 — Claude 4.6 Opus/Sonnet are 1M, Haiku 4.5 is 200K.
     /// </summary>
     private static readonly Dictionary<string, int> KnownContextWindows = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["claude-sonnet-4"] = 200000,
-        ["claude-opus-4"] = 200000,
-        ["claude-3-5-sonnet"] = 200000,
-        ["claude-3-5-sonnet-20241022"] = 200000,
-        ["claude-3-5-sonnet-20240620"] = 200000,
-        ["claude-3-opus"] = 200000,
-        ["claude-3-opus-20240229"] = 200000,
-        ["claude-3-sonnet"] = 200000,
-        ["claude-3-sonnet-20240229"] = 200000,
-        ["claude-3-haiku"] = 200000,
-        ["claude-3-haiku-20240307"] = 200000,
+        // Current generation (April 2026)
+        ["claude-opus-4-6"] = 1_000_000,
+        ["claude-sonnet-4-6"] = 1_000_000,
+        ["claude-haiku-4-5"] = 200_000,
+        ["claude-haiku-4-5-20251001"] = 200_000,
+
+        // Legacy (still functional, may be deprecated)
+        ["claude-sonnet-4-20250514"] = 200_000,
+        ["claude-opus-4-20250116"] = 200_000,
+        ["claude-3-5-sonnet-20241022"] = 200_000,
+        ["claude-3-5-sonnet-20240620"] = 200_000,
+        ["claude-3-5-haiku-20241022"] = 200_000,
     };
 
     /// <summary>

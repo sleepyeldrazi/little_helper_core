@@ -125,13 +125,16 @@ Providers with `"api_type": "anthropic"` are fully supported. Add an Anthropic p
       "base_url": "https://api.anthropic.com",
       "api_key": "sk-ant-...",
       "api_type": "anthropic",
-      "models": [{ "id": "claude-sonnet-4-20250514", "context_window": 200000 }]
+      "models": [
+        { "id": "claude-sonnet-4-6", "context_window": 1000000 },
+        { "id": "claude-haiku-4-5", "context_window": 200000 }
+      ]
     }
   }
 }
 ```
 
-Usage: `little_helper -m anthropic/claude-sonnet-4-20250514 "prompt"`
+Usage: `little_helper -m anthropic/claude-sonnet-4-6 "prompt"`
 
 Key differences handled by `AnthropicClient`:
 - `POST /v1/messages` instead of `/v1/chat/completions`
