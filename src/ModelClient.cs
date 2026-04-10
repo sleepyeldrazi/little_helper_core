@@ -7,6 +7,7 @@ namespace LittleHelper;
 /// <summary>
 /// OpenAI-compatible HTTP client. The only I/O boundary to the LLM.
 /// Handles JSON repair, fuzzy tool matching, and retry logic.
+/// Streaming logic lives in ModelStreaming.cs (Rule #8: files ≤ 300 lines).
 /// </summary>
 public class ModelClient : IDisposable
 {
@@ -43,11 +44,9 @@ public class ModelClient : IDisposable
         _tools = new List<ToolDef>();
         _totalTokensUsed = 0;
 
-        // Set auth header if API key provided
         if (!string.IsNullOrEmpty(apiKey))
             _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
-        // Add extra headers (e.g., OpenRouter needs HTTP-Referer, X-Title)
         if (extraHeaders != null)
         {
             foreach (var (key, value) in extraHeaders)
@@ -55,16 +54,11 @@ public class ModelClient : IDisposable
         }
     }
 
-    public void Dispose()
-    {
-        if (!_disposed) { _http.Dispose(); _disposed = true; }
-    }
+    public void Dispose() { if (!_disposed) { _http.Dispose(); _disposed = true; } }
 
     /// <summary>Register a tool that the model can call.</summary>
-    public void RegisterTool(string name, string description, JsonElement parametersSchema)
-    {
+    public void RegisterTool(string name, string description, JsonElement parametersSchema) =>
         _tools.Add(new ToolDef(name, description, parametersSchema));
-    }
 
     /// <summary>
     /// Send a chat completion request with tool definitions.
@@ -86,7 +80,7 @@ public class ModelClient : IDisposable
 
             if (observer != null)
             {
-                response = await SendRequestStreaming(requestBody, observer, ct);
+                response = await ModelStreaming.SendStreaming(_http, _endpoint, requestBody, observer, ct);
             }
             else
             {
@@ -162,7 +156,7 @@ public class ModelClient : IDisposable
     }
 
     /// <summary>
-    /// Send the HTTP request. Propagates cancellation immediately.
+    /// Send a non-streaming HTTP request. Propagates cancellation immediately.
     /// </summary>
     private async Task<JsonElement?> SendRequest(string requestBody, CancellationToken ct)
     {
@@ -187,184 +181,6 @@ public class ModelClient : IDisposable
             Console.Error.WriteLine($"Model request failed: {ex.Message}");
             return null;
         }
-    }
-
-    /// <summary>
-    /// Send a streaming SSE request. Accumulates chunks into a complete response
-    /// while forwarding content/thinking deltas to the observer.
-    /// Falls back to non-streaming if SSE parsing fails.
-    /// </summary>
-    private async Task<JsonElement?> SendRequestStreaming(string requestBody, IAgentObserver observer, CancellationToken ct)
-    {
-        try
-        {
-            var content = new StringContent(requestBody, Encoding.UTF8, "application/json");
-            var request = new HttpRequestMessage(HttpMethod.Post, $"{_endpoint}/chat/completions") { Content = content };
-
-            using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorBody = await response.Content.ReadAsStringAsync(ct);
-                Console.Error.WriteLine($"Model API error ({response.StatusCode}): {errorBody}");
-                return null;
-            }
-
-            // Read SSE stream and accumulate response
-            var fullContent = new StringBuilder();
-            var fullThinking = new StringBuilder();
-            var toolCallArgs = new Dictionary<int, StringBuilder>(); // index -> args
-            var toolCallNames = new Dictionary<int, string>(); // index -> name
-            var toolCallIds = new Dictionary<int, string>(); // index -> id
-            int totalTokens = 0;
-
-            using var stream = await response.Content.ReadAsStreamAsync(ct);
-            using var reader = new StreamReader(stream);
-
-            string? line;
-            while ((line = await reader.ReadLineAsync(ct)) != null)
-            {
-                if (string.IsNullOrWhiteSpace(line) || !line.StartsWith("data: ")) continue;
-                var data = line["data: ".Length..].Trim();
-                if (data == "[DONE]") break;
-
-                JsonDocument doc;
-                try { doc = JsonDocument.Parse(data); }
-                catch { continue; }
-
-                using (doc)
-                {
-                    var root = doc.RootElement;
-
-                    // Extract content delta
-                    if (root.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0)
-                    {
-                        var delta = choices[0].GetProperty("delta");
-
-                        // Content delta
-                        if (delta.TryGetProperty("content", out var c) && c.ValueKind != JsonValueKind.Null)
-                        {
-                            var chunk = c.GetString() ?? "";
-                            fullContent.Append(chunk);
-                            observer.OnStreamChunk(chunk, null);
-                        }
-
-                        // Thinking/reasoning delta (Kimi K2.5 / DeepSeek)
-                        if (delta.TryGetProperty("reasoning_content", out var rc) && rc.ValueKind != JsonValueKind.Null)
-                        {
-                            var chunk = rc.GetString() ?? "";
-                            fullThinking.Append(chunk);
-                            observer.OnStreamChunk("", chunk);
-                        }
-                        // Ollama thinking delta
-                        else if (delta.TryGetProperty("thinking", out var tk) && tk.ValueKind != JsonValueKind.Null)
-                        {
-                            var chunk = tk.GetString() ?? "";
-                            fullThinking.Append(chunk);
-                            observer.OnStreamChunk("", chunk);
-                        }
-
-                        // Tool call deltas (streaming)
-                        if (delta.TryGetProperty("tool_calls", out var tcDelta) && tcDelta.ValueKind == JsonValueKind.Array)
-                        {
-                            foreach (var tc in tcDelta.EnumerateArray())
-                            {
-                                var idx = tc.TryGetProperty("index", out var idxEl) ? idxEl.GetInt32() : 0;
-                                if (!toolCallArgs.ContainsKey(idx))
-                                {
-                                    toolCallArgs[idx] = new StringBuilder();
-                                    toolCallNames[idx] = "";
-                                    toolCallIds[idx] = "";
-                                }
-                                if (tc.TryGetProperty("id", out var id) && id.ValueKind != JsonValueKind.Null)
-                                    toolCallIds[idx] = id.GetString() ?? "";
-                                if (tc.TryGetProperty("function", out var func))
-                                {
-                                    if (func.TryGetProperty("name", out var name) && name.ValueKind != JsonValueKind.Null)
-                                        toolCallNames[idx] = name.GetString() ?? "";
-                                    if (func.TryGetProperty("arguments", out var args) && args.ValueKind != JsonValueKind.Null)
-                                        toolCallArgs[idx].Append(args.GetString() ?? "");
-                                }
-                            }
-                        }
-                    }
-
-                    // Usage from streaming (some providers send it in the last chunk)
-                    if (root.TryGetProperty("usage", out var usage))
-                    {
-                        if (usage.TryGetProperty("total_tokens", out var total))
-                            totalTokens = total.GetInt32();
-                    }
-                }
-            }
-
-            // Reconstruct a non-streaming JSON response for ParseResponse
-            var reconstructed = BuildReconstructedResponse(fullContent.ToString(), fullThinking.ToString(),
-                toolCallIds, toolCallNames, toolCallArgs, totalTokens);
-            return reconstructed;
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"Streaming request failed: {ex.Message}");
-            return null;
-        }
-    }
-
-    /// <summary>Build a synthetic non-streaming response from accumulated stream data.</summary>
-    private JsonElement BuildReconstructedResponse(string content, string thinking,
-        Dictionary<int, string> toolCallIds, Dictionary<int, string> toolCallNames,
-        Dictionary<int, StringBuilder> toolCallArgs, int totalTokens)
-    {
-        var toolCallsList = new List<Dictionary<string, object>>();
-        foreach (var idx in toolCallArgs.Keys.OrderBy(k => k))
-        {
-            var func = new Dictionary<string, object>
-            {
-                ["name"] = ResolveToolName(toolCallNames.GetValueOrDefault(idx, "")),
-                ["arguments"] = toolCallArgs[idx].ToString()
-            };
-            var tc = new Dictionary<string, object>
-            {
-                ["id"] = toolCallIds.GetValueOrDefault(idx, Guid.NewGuid().ToString()),
-                ["type"] = "function",
-                ["function"] = func
-            };
-            toolCallsList.Add(tc);
-        }
-
-        var message = new Dictionary<string, object?>
-        {
-            ["role"] = "assistant",
-            ["content"] = content
-        };
-        if (!string.IsNullOrEmpty(thinking))
-            message["reasoning_content"] = thinking;
-        if (toolCallsList.Count > 0)
-            message["tool_calls"] = toolCallsList;
-
-        var response = new Dictionary<string, object?>
-        {
-            ["choices"] = new[]
-            {
-                new Dictionary<string, object?>
-                {
-                    ["message"] = message,
-                    ["finish_reason"] = "stop",
-                    ["index"] = 0
-                }
-            },
-            ["usage"] = new Dictionary<string, object?>
-            {
-                ["total_tokens"] = totalTokens
-            }
-        };
-
-        var json = JsonSerializer.Serialize(response, new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
-        });
-        return JsonDocument.Parse(json).RootElement.Clone();
     }
 
     /// <summary>Parse the API response into a ModelResponse.</summary>
@@ -440,7 +256,7 @@ public class ModelClient : IDisposable
 
     /// <summary>
     /// Fuzzy tool name matching. Normalizes to lowercase, strips underscores/hyphens.
-    /// Falls back to Levenshtein distance <= 2.
+    /// Falls back to Levenshtein distance ≤ 2.
     /// </summary>
     private string ResolveToolName(string rawName)
     {

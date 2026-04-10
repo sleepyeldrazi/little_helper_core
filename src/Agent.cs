@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Collections.Concurrent;
 
 namespace LittleHelper;
 
@@ -17,17 +16,12 @@ public class Agent
     private readonly PromptBuilder _promptBuilder;
     private readonly SessionLogger? _logger;
     private readonly IAgentObserver? _observer;
+    private readonly AgentControl _control;
     private List<string> _filesChanged;
 
     // Stall detection: circular buffer of recent observations
     private string?[] _recentObservations;
     private int _observationIndex;
-
-    // Pause/resume: checked between FSM steps
-    private readonly ManualResetEventSlim _pauseGate = new(true);
-
-    // Message injection: thread-safe queue drained between steps
-    private readonly ConcurrentQueue<string> _injectedMessages = new();
 
     // Conversation history: accessible for TUI (read-only from outside)
     private List<ChatMessage> _messages = new();
@@ -35,8 +29,8 @@ public class Agent
     /// <summary>Read-only access to conversation history for TUI.</summary>
     public IReadOnlyList<ChatMessage> History => _messages.AsReadOnly();
 
-    /// <summary>Whether the agent is currently paused between steps.</summary>
-    public bool IsPaused => !_pauseGate.IsSet;
+    /// <summary>Access to the control surface (pause/resume/inject/intercept).</summary>
+    public AgentControl Control => _control;
 
     public Agent(AgentConfig config, ModelClient modelClient, ToolExecutor toolExecutor,
         SkillDiscovery skills, SessionLogger? logger = null, IAgentObserver? observer = null)
@@ -49,25 +43,11 @@ public class Agent
         _promptBuilder = new PromptBuilder(config, skills);
         _logger = logger;
         _observer = observer;
+        _control = new AgentControl();
         _filesChanged = new List<string>();
         _recentObservations = new string?[config.StallThreshold];
         _observationIndex = 0;
     }
-
-    /// <summary>Pause the agent. It will stop at the next step boundary.</summary>
-    public void Pause() => _pauseGate.Reset();
-
-    /// <summary>Resume the agent after a pause.</summary>
-    public void Resume() => _pauseGate.Set();
-
-    /// <summary>Inject a user message to be processed at the next step boundary.</summary>
-    public void InjectMessage(string message) => _injectedMessages.Enqueue(message);
-
-    /// <summary>
-    /// Set a tool call interceptor. Called before each tool execution.
-    /// Return null to skip the call, return a modified ToolCall to edit arguments.
-    /// </summary>
-    public Func<ToolCall, ToolCall?>? ToolInterceptor { get; set; }
 
     /// <summary>
     /// Run the agent loop until done or step limit reached.
@@ -90,13 +70,13 @@ public class Agent
             ct.ThrowIfCancellationRequested();
 
             // Pause checkpoint: block here if paused, wake on Resume()
-            _pauseGate.Wait(ct);
+            _control.WaitIfPaused(ct);
 
             // Drain any injected messages
-            while (_injectedMessages.TryDequeue(out var injected))
+            foreach (var inj in _control.DrainInjectedMessages())
             {
-                _messages.Add(ChatMessage.User(injected));
-                _observer?.OnError($"[Injected] {injected[..Math.Min(80, injected.Length)]}");
+                _messages.Add(ChatMessage.User(inj));
+                _observer?.OnError($"[Injected] {inj[..Math.Min(80, inj.Length)]}");
             }
 
             switch (state)
@@ -104,9 +84,7 @@ public class Agent
                 case AgentState.Planning:
                     Log("[State] Planning — building initial context");
                     _messages = _promptBuilder.BuildInitialContext(userPrompt);
-                    var fromPlanning = state;
-                    state = AgentState.Executing;
-                    _observer?.OnStateChange(fromPlanning, state);
+                    state = TransitionState(state, AgentState.Executing);
                     break;
 
                 case AgentState.Executing:
@@ -131,15 +109,11 @@ public class Agent
                     if (response.ToolCalls.Count == 0)
                     {
                         finalOutput = response.Content;
-                        var fromExecuting = state;
-                        state = AgentState.Done;
-                        _observer?.OnStateChange(fromExecuting, state);
+                        state = TransitionState(state, AgentState.Done);
                     }
                     else
                     {
-                        var fromExecuting2 = state;
-                        state = AgentState.Observing;
-                        _observer?.OnStateChange(fromExecuting2, state);
+                        state = TransitionState(state, AgentState.Observing);
                     }
                     break;
 
@@ -147,7 +121,6 @@ public class Agent
                     Log("[State] Observing — executing tool calls");
                     bool hadError = false;
 
-                    // Get the assistant message with tool calls
                     var lastAssistant = _messages.LastOrDefault(m => m.Role == "assistant" && m.ToolCalls?.Count > 0);
                     var toolCalls = lastAssistant?.ToolCalls ?? new List<ToolCall>();
 
@@ -155,10 +128,12 @@ public class Agent
                     {
                         // Tool interception: allow TUI to skip/edit calls
                         var intercepted = _observer?.OnToolCallExecuting(toolCall, step) ?? toolCall;
+                        var interceptorResult = _control.ToolInterceptor?.Invoke(toolCall);
+                        if (interceptorResult != null) intercepted = interceptorResult;
+
                         if (intercepted == null)
                         {
                             Log($"  {toolCall.Name} SKIPPED (intercepted)");
-                            // Still need to send a tool result so the model doesn't hang
                             var skipResult = new ToolResult("Tool call skipped by user.", true);
                             _messages.Add(ChatMessage.FromToolResult(toolCall.Id, skipResult));
                             continue;
@@ -199,9 +174,7 @@ public class Agent
                     {
                         Log("[State] Stall detected — stopping");
                         finalOutput = "Stall detected: repeated observations. Stopping.";
-                        var fromObserving = state;
-                        state = AgentState.Done;
-                        _observer?.OnStateChange(fromObserving, state);
+                        state = TransitionState(state, AgentState.Done);
                         break;
                     }
 
@@ -211,31 +184,23 @@ public class Agent
                         {
                             errorRecoveryCount++;
                             Log($"[State] Error recovery (attempt {errorRecoveryCount}/{_config.MaxRetries})");
-                            var fromObserving2 = state;
-                            state = AgentState.ErrorRecovery;
-                            _observer?.OnStateChange(fromObserving2, state);
+                            state = TransitionState(state, AgentState.ErrorRecovery);
                         }
                         else
                         {
                             Log($"[State] Max error recovery attempts reached ({errorRecoveryCount}/{_config.MaxRetries}), forcing done");
                             finalOutput = "Max error recovery attempts reached. Stopping.";
-                            var fromObserving3 = state;
-                            state = AgentState.Done;
-                            _observer?.OnStateChange(fromObserving3, state);
+                            state = TransitionState(state, AgentState.Done);
                         }
                     }
                     else
                     {
-                        // Successful observation resets the error recovery counter
                         errorRecoveryCount = 0;
-                        var fromObserving4 = state;
-                        state = AgentState.Executing;
-                        _observer?.OnStateChange(fromObserving4, state);
+                        state = TransitionState(state, AgentState.Executing);
                     }
                     break;
 
                 case AgentState.ErrorRecovery:
-                    // Inject error context as a system message
                     var recentErrors = _messages
                         .Where(m => m.Role == "tool" && m.ToolResult?.IsError == true)
                         .TakeLast(1)
@@ -245,9 +210,7 @@ public class Agent
                         ? "The previous tool call failed. Consider an alternative approach."
                         : $"The previous tool call failed: {recentErrors[..Math.Min(300, recentErrors.Length)]}\nConsider an alternative approach or fix the error before retrying.";
                     _messages.Add(ChatMessage.System(errorHint));
-                    var fromRecovery = state;
-                    state = AgentState.Executing;
-                    _observer?.OnStateChange(fromRecovery, state);
+                    state = TransitionState(state, AgentState.Executing);
                     break;
             }
         }
@@ -271,19 +234,20 @@ public class Agent
             TotalThinkingTokens: _modelClient.TotalThinkingTokens);
     }
 
-    /// <summary>
-    /// Format the last observation for stall detection.
-    /// </summary>
+    /// <summary>Transition state and notify observer.</summary>
+    private AgentState TransitionState(AgentState from, AgentState to)
+    {
+        _observer?.OnStateChange(from, to);
+        return to;
+    }
+
+    /// <summary>Format the last observation for stall detection.</summary>
     private string FormatLastObservation(List<ChatMessage> messages)
     {
-        // Look at the last few tool results
-        var toolResults = messages
+        return string.Join("\n", messages
             .Where(m => m.Role == "tool" && m.Content != null)
             .TakeLast(3)
-            .Select(m => m.Content!)
-            .ToList();
-
-        return string.Join("\n", toolResults);
+            .Select(m => m.Content!));
     }
 
     /// <summary>
@@ -295,15 +259,12 @@ public class Agent
         if (string.IsNullOrWhiteSpace(observation))
             return false;
 
-        // Normalize: collapse whitespace
         var normalized = string.Join(" ", observation.Split(new[] { ' ', '\n', '\r', '\t' },
             StringSplitOptions.RemoveEmptyEntries));
 
-        // Store in circular buffer
         _recentObservations[_observationIndex] = normalized;
         _observationIndex = (_observationIndex + 1) % _recentObservations.Length;
 
-        // Check if all entries are the same (and all filled)
         var nonNull = _recentObservations.Where(o => o != null).ToList();
         if (nonNull.Count < _config.StallThreshold)
             return false;
@@ -332,10 +293,7 @@ public class Agent
                 _ => args.GetRawText()[..Math.Min(60, args.GetRawText().Length)]
             };
         }
-        catch
-        {
-            return "";
-        }
+        catch { return ""; }
     }
 
     private static string Truncate(string s, int maxLen) =>
