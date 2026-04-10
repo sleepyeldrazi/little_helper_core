@@ -106,7 +106,7 @@ XML tags reduce brittleness. "Prompt-only structured output has 5–20% failure 
 
 ## References
 
-- **Repo feedback:** opencode, hermes, forgecode, pi-mono REPO_FEEDBACK.md files
-- **Research:** Research.md (SOLVE-Med, MATA, ATLAS, SWE-agent, Agentless), Research-prompt.md (Lost in the Middle, POSIX, Principled Instructions, LLMLingua), Research-orchestration.md (StateFlow, A-MEM, JetBrains context research)
+- **Harness feedback:** [opencode/REPO_FEEDBACK.md](https://github.com/sleepyeldrazi/coding-harness-feedback/blob/main/opencode/REPO_FEEDBACK.md), [hermes/REPO_FEEDBACK.md](https://github.com/sleepyeldrazi/coding-harness-feedback/blob/main/hermes/REPO_FEEDBACK.md), [forgecode/REPO_FEEDBACK.md](https://github.com/sleepyeldrazi/coding-harness-feedback/blob/main/forgecode/REPO_FEEDBACK.md), [pi/REPO_FEEDBACK.md](https://github.com/sleepyeldrazi/coding-harness-feedback/blob/main/pi/REPO_FEEDBACK.md)
+- **Research:** [Research.md](https://github.com/sleepyeldrazi/coding-harness-feedback/blob/main/Research.md) (SOLVE-Med, MATA, ATLAS, SWE-agent, Agentless), [Research-prompt.md](https://github.com/sleepyeldrazi/coding-harness-feedback/blob/main/Research-prompt.md) (Lost in the Middle, POSIX, Principled Instructions, LLMLingua), [Research-orchestration.md](https://github.com/sleepyeldrazi/coding-harness-feedback/blob/main/Research-orchestration.md) (StateFlow, A-MEM, JetBrains context research)
 
 *Analysis April 9, 2026. Conclusions backed by multiple verified reports and research citations.*
