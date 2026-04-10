@@ -28,12 +28,18 @@ No lanes, no ownership resolution, no prompt file loading, no tool-blind mode, n
 ```
 src/
   Agent.cs              — FSM loop: Planning→Executing→Observing→Done, stall detection
+  AgentControl.cs       — Pause/resume, message injection, tool interception
+  AnthropicClient.cs    — Anthropic Messages API client (claude.ai / direct)
+  AnthropicStreaming.cs — Anthropic SSE streaming parser
+  IAgentObserver.cs     — Observer interface for TUI integration
+  IModelClient.cs       — Model client abstraction (OpenAI + Anthropic)
   ModelClient.cs        — OpenAI-compatible HTTP client, JSON repair, fuzzy tool matching
+  ModelStreaming.cs     — OpenAI SSE streaming parser
   Tools.cs              — 5 tools: read, run, write, search, bash
   ToolSchemas.cs        — JSON schema definitions, normalization (additionalProperties: false)
   Types.cs              — Records: ChatMessage, ModelResponse, AgentResult, AgentConfig
   Skills.cs             — SkillDiscovery: SKILL.md parsing, XML formatting for prompt
-  PromptBuilder.cs      — System prompt construction, skill injection, context building
+  PromptBuilder.cs      — System prompt construction, skill injection, batch scripting hint
   Compaction.cs         — Context window management, token estimation, message pruning
   ModelConfig.cs        — Multi-provider config from ~/.little_helper/models.json
   ConfigResolver.cs     — CLI args + config file → resolved endpoint/model/key
@@ -107,9 +113,32 @@ cat ~/.little_helper/logs/*.jsonl | jq 'select(.type=="tool") | {tool, args, dur
 
 ---
 
-## Anthropic API (Future)
+## Anthropic API
 
-Providers with `"api_type": "anthropic"` are recognized but not yet supported. See `ProviderConfig.ApiType` docs in `ModelConfig.cs` for implementation notes covering the full Anthropic Messages API differences.
+Providers with `"api_type": "anthropic"` are fully supported. Add an Anthropic provider to your `models.json`:
+
+```json
+{
+  "providers": {
+    "anthropic": {
+      "base_url": "https://api.anthropic.com",
+      "api_key": "sk-ant-...",
+      "api_type": "anthropic",
+      "models": [{ "id": "claude-sonnet-4-20250514", "context_window": 200000 }]
+    }
+  }
+}
+```
+
+Usage: `little_helper -m anthropic/claude-sonnet-4-20250514 "prompt"`
+
+Key differences handled by `AnthropicClient`:
+- `POST /v1/messages` instead of `/v1/chat/completions`
+- Content blocks (`text`, `thinking`, `tool_use`, `tool_result`) instead of flat messages
+- `x-api-key` + `anthropic-version` headers instead of `Authorization: Bearer`
+- Tool schemas use `input_schema` instead of `parameters` (no `function` wrapper)
+- System prompt is a top-level `system` field, not a message
+- SSE streaming uses typed events (`message_start`, `content_block_start`, `content_block_delta`, etc.)
 
 ---
 
@@ -211,7 +240,7 @@ Core stays clean — no TUI dependencies.
 
 ```bash
 dotnet build                    # 0 warnings, 0 errors
-dotnet test                     # 62 passed, 2 skipped (integration)
+dotnet test                     # 75 passed, 2 skipped (integration)
 
 dotnet publish src -c Release -r linux-x64 \
   --self-contained true -p:PublishSingleFile=true
@@ -230,42 +259,15 @@ See [RESEARCH.md](RESEARCH.md) for full synthesis. Key papers:
 
 ---
 
-## Future Features
+## Batch Scripting
 
-### Script Tool (Programmatic Tool Calling)
+Instead of a separate `script` tool, batch scripting is encouraged via a system prompt instruction in `PromptBuilder`. The model is told:
 
-Inspired by Anthropic's "programmatic tool calling" — instead of making many separate
-`run`/`search` calls (each burning a round-trip and dumping raw output into context),
-the model writes a small Python script that does everything in one shot.
+> When you need multiple pieces of information or need to perform several operations,
+> write a short Python or shell script and run it with the `run` tool. One script call
+> is better than many separate tool calls — it saves round-trips and keeps context clean.
 
-**Why it matters for context efficiency:**
-
-Instead of this (3 round-trips, ~4KB raw output hitting context):
-```
-Step 1: run("find . -name '*.cs' | head -50")        → 50 lines
-Step 2: run("grep -rn 'TODO' src/ | head -30")        → 30 lines
-Step 3: run("wc -l src/*.cs | sort -rn | head -10")   → 10 lines
-```
-
-The model writes this (1 round-trip, ~200 chars of filtered output):
-```python
-import os
-for root, dirs, files in os.walk("src"):
-    for f in files:
-        if f.endswith(".cs"):
-            path = os.path.join(root, f)
-            lines = open(path).readlines()
-            todos = [i+1 for i,l in enumerate(lines) if "TODO" in l]
-            if todos:
-                print(f"{path}: {len(lines)} lines, TODOs at {todos}")
-```
-
-**Implementation sketch:**
-- New `script` tool alongside read/run/write/search/bash
-- Injected helpers: `run(cmd)` and `run_lines(cmd)` for shell access
-- Only `print()` output is returned to the model — intermediate results stay in the script
-- 8KB output cap, 120s timeout
-- Saves both round-trips and context pollution
+This avoids adding a 6th tool (violating Rule #2) while achieving the same context efficiency gains. The model already has `run` — it just needs a nudge to use it for batch operations.
 
 ---
 

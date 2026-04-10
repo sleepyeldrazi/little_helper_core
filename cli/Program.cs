@@ -233,14 +233,6 @@ class Program
             return 1;
         }
 
-        // Warn if using an unsupported API type
-        if (resolved.ApiType != "openai")
-        {
-            Console.Error.WriteLine(
-                $"Warning: Provider uses '{resolved.ApiType}' API, which is not yet supported. " +
-                "Only OpenAI-compatible endpoints work currently.");
-        }
-
         var config = new AgentConfig(
             ModelEndpoint: resolved.Endpoint, ModelName: resolved.ModelId,
             MaxContextTokens: resolved.ContextWindow, MaxSteps: maxSteps,
@@ -251,8 +243,9 @@ class Program
         Console.WriteLine("little_helper v0.1.0");
         Console.WriteLine($"Model: {resolved.ModelId}");
         Console.WriteLine($"Endpoint: {resolved.Endpoint}");
+        Console.WriteLine($"API: {resolved.ApiType}");
         if (!string.IsNullOrEmpty(resolved.ApiKey))
-            Console.WriteLine("Auth: Bearer ***");
+            Console.WriteLine("Auth: ***");
         Console.WriteLine($"Working dir: {config.WorkingDirectory}");
         Console.WriteLine();
 
@@ -261,9 +254,7 @@ class Program
             var skills = new SkillDiscovery();
             skills.Discover(config.WorkingDirectory, ResolveBundledSkillsDir());
 
-            using var modelClient = new ModelClient(
-                config.ModelEndpoint, config.ModelName, config.Temperature,
-                config.ApiKey, config.ExtraHeaders);
+            using IModelClient modelClient = CreateModelClient(resolved);
             ToolSchemas.RegisterAll(modelClient);
 
             var toolExecutor = new ToolExecutor(config.WorkingDirectory, blockDestructive);
@@ -318,4 +309,15 @@ class Program
             return 1;
         }
     }
+
+    /// <summary>Create the appropriate model client based on API type.</summary>
+    static IModelClient CreateModelClient(ResolvedConfig resolved) => resolved.ApiType switch
+    {
+        "anthropic" => new AnthropicClient(
+            resolved.Endpoint, resolved.ModelId, resolved.Temperature,
+            resolved.ApiKey, resolved.Headers),
+        _ => new ModelClient(
+            resolved.Endpoint, resolved.ModelId, resolved.Temperature,
+            resolved.ApiKey, resolved.Headers)
+    };
 }

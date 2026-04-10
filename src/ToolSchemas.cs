@@ -13,7 +13,7 @@ public static class ToolSchemas
     /// <summary>
     /// Register the 5 standard tool schemas with a ModelClient.
     /// </summary>
-    public static void RegisterAll(ModelClient client)
+    public static void RegisterAll(IModelClient client)
     {
         // Tool 1: read
         client.RegisterTool("read",

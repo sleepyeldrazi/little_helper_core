@@ -9,7 +9,7 @@ namespace LittleHelper;
 /// Handles JSON repair, fuzzy tool matching, and retry logic.
 /// Streaming logic lives in ModelStreaming.cs (Rule #8: files ≤ 300 lines).
 /// </summary>
-public class ModelClient : IDisposable
+public class ModelClient : IModelClient
 {
     private readonly HttpClient _http;
     private readonly string _endpoint;

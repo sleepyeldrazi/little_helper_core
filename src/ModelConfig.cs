@@ -163,31 +163,7 @@ public class ProviderConfig
     /// <summary>Optional extra HTTP headers to send with every request.</summary>
     public Dictionary<string, string>? Headers { get; set; }
 
-    // --- Future: Anthropic API support ---
-    // Currently little_helper only supports OpenAI-compatible /chat/completions endpoints.
-    // To add Anthropic Messages API support, implement an AnthropicModelClient that speaks
-    // the /v1/messages format (content blocks, thinking tags, etc.) and route based on this field.
-    //
-    // The routing logic in ConfigResolver.Resolve() should check ApiType:
-    //   "openai" (default) → use ModelClient (current)
-    //   "anthropic"        → use AnthropicModelClient (to be implemented)
-    //
-    // Anthropic API differences from OpenAI:
-    //   - POST /v1/messages instead of /v1/chat/completions
-    //   - Uses "content" array with typed blocks (text, tool_use, tool_result)
-    //   - API key in x-api-key header instead of Authorization: Bearer
-    //   - anthropic-version header required (e.g. "2023-06-01")
-    //   - Different tool calling format (tool_use blocks, not function calls)
-    //   - Streaming uses SSE with event types (message_start, content_block_start, etc.)
-    //
-    // Affected files when implementing:
-    //   ModelConfig.cs  — route on ApiType in Resolve()
-    //   ConfigResolver.cs — pass ApiType through to RunAgent
-    //   Program.cs      — select ModelClient vs AnthropicModelClient based on ApiType
-    //   AnthropicModelClient.cs (new) — /v1/messages API client
-    //   Types.cs        — ChatMessage may need Anthropic-specific role handling
-    //
-    /// <summary>API protocol: "openai" (default) or "anthropic". Currently only "openai" is supported.</summary>
+    /// <summary>API protocol: "openai" (default) or "anthropic".</summary>
     public string ApiType { get; set; } = "openai";
 }
 

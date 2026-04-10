@@ -71,6 +71,14 @@ public class PromptBuilder
         sb.AppendLine("Use them to complete the task. When done, respond without tool calls.");
         sb.AppendLine();
 
+        // Batch scripting guidance (instead of a separate script tool)
+        sb.AppendLine("Efficiency: When you need multiple pieces of information or need to perform");
+        sb.AppendLine("several operations, write a short Python or shell script and run it with the");
+        sb.AppendLine("run tool. One script call is better than many separate tool calls — it saves");
+        sb.AppendLine("round-trips and keeps context clean. Example: instead of 3 separate search");
+        sb.AppendLine("calls, write a script that does grep + wc + sort in one shot.");
+        sb.AppendLine();
+
         // Working directory context
         sb.AppendLine($"Working directory: {_config.WorkingDirectory}");
 

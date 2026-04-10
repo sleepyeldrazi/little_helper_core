@@ -9,7 +9,7 @@ namespace LittleHelper;
 public class Agent
 {
     private readonly AgentConfig _config;
-    private readonly ModelClient _modelClient;
+    private readonly IModelClient _modelClient;
     private readonly ToolExecutor _toolExecutor;
     private readonly SkillDiscovery _skills;
     private readonly Compaction _compactor;
@@ -32,7 +32,7 @@ public class Agent
     /// <summary>Access to the control surface (pause/resume/inject/intercept).</summary>
     public AgentControl Control => _control;
 
-    public Agent(AgentConfig config, ModelClient modelClient, ToolExecutor toolExecutor,
+    public Agent(AgentConfig config, IModelClient modelClient, ToolExecutor toolExecutor,
         SkillDiscovery skills, SessionLogger? logger = null, IAgentObserver? observer = null)
     {
         _config = config;

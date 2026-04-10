@@ -33,15 +33,6 @@ public static class ConfigResolver
             var contextWindow = maxContextArg > 0 ? maxContextArg : resolved.ContextWindow;
             var temperature = temperatureArg > 0 ? temperatureArg : resolved.Temperature;
 
-            // Warn if using an unsupported API type
-            if (resolved.ApiType != "openai")
-            {
-                Console.Error.WriteLine(
-                    $"Warning: Provider uses '{resolved.ApiType}' API, which is not yet supported. " +
-                    "Only OpenAI-compatible endpoints work currently. " +
-                    "See ProviderConfig.ApiType docs in ModelConfig.cs for implementation notes.");
-            }
-
             return new ResolvedConfig(modelId, endpoint, apiKey, resolved.Headers, contextWindow, temperature, resolved.ApiType);
         }
 
