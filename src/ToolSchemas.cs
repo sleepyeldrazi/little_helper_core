@@ -5,8 +5,6 @@ namespace LittleHelper;
 /// <summary>
 /// Tool schema definitions and normalization.
 /// Extracted from Tools.cs to keep files under 300 lines (Rule #8).
-/// Each schema includes additionalProperties: false on all objects per research
-/// (constrained decoding removes syntactic failures).
 /// </summary>
 public static class ToolSchemas
 {
@@ -129,8 +127,11 @@ public static class ToolSchemas
     }
 
     /// <summary>
-    /// Recursively normalize an object schema: ensure additionalProperties: false
-    /// on all nested objects, deduplicate properties, validate required fields.
+    /// Recursively normalize an object schema: deduplicate properties,
+    /// validates required fields exist.
+    /// NOTE: Does NOT add additionalProperties: false -- that keyword
+    /// breaks llama.cpp's GBNF grammar generator. Forgecode strips it,
+    /// opencode never includes it, and it provides no benefit for tool calling.
     /// </summary>
     private static Dictionary<string, object> NormalizeObject(JsonElement element)
     {
@@ -143,15 +144,6 @@ public static class ToolSchemas
             {
                 // Recursively normalize nested objects
                 var nested = NormalizeObject(prop.Value);
-
-                // If this is a property value that describes a schema (has "type"),
-                // ensure it has additionalProperties: false when type is "object"
-                if (nested.ContainsKey("type") && nested["type"] is string typeStr
-                    && typeStr == "object")
-                {
-                    nested["additionalProperties"] = false;
-                }
-
                 result[prop.Name] = nested;
             }
             else
@@ -161,12 +153,9 @@ public static class ToolSchemas
             }
         }
 
-        // Ensure top-level has type: object and additionalProperties: false
+        // Ensure top-level has type: object
         if (!result.ContainsKey("type"))
             result["type"] = "object";
-
-        if (result.TryGetValue("type", out var typeObj) && typeObj is string t && t == "object")
-            result["additionalProperties"] = false;
 
         return result;
     }
