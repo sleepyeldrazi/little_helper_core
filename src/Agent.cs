@@ -97,7 +97,7 @@ public class Agent
                     }
 
                     _observer?.OnStepStart(step + 1);
-                    var response = await _modelClient.Complete(_messages, ct, observer: _observer);
+                    var response = await _modelClient.Complete(_messages, ct, observer: _observer, enableStreaming: _config.EnableStreaming);
                     step++;
                     Log($"[Step {step}] Model responded ({response.TokensUsed} tokens, {response.ToolCalls.Count} tool calls)");
                     _logger?.Step(step, response.TokensUsed, response.ThinkingTokens,
