@@ -23,7 +23,21 @@ public class PromptBuilder
     private const int TinyModelThreshold = 8192;    // < 8K: minimal prompt
 
     private bool IsSmallModel => _config.MaxContextTokens < SmallModelThreshold;
-    private bool IsTinyModel => _config.MaxContextTokens < TinyModelThreshold;
+    private bool IsTinyModel => _config.MaxContextTokens < TinyModelThreshold || IsModelSizeTiny();
+
+    /// <summary>
+    /// Check if the model name contains a parameter count ≤ 8B (e.g. "qwen3:4b", "llama3.1:8b").
+    /// Models this small need stripped prompts regardless of context window.
+    /// </summary>
+    private bool IsModelSizeTiny()
+    {
+        var name = _config.ModelName.ToLowerInvariant();
+        var match = System.Text.RegularExpressions.Regex.Match(name, @"(\d+(?:\.\d+)?)\s*b");
+        if (!match.Success) return false;
+        if (double.TryParse(match.Groups[1].Value, out var billions))
+            return billions <= 8.0;
+        return false;
+    }
 
     public PromptBuilder(AgentConfig config, SkillDiscovery skills)
     {

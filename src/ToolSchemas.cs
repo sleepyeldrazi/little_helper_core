@@ -15,11 +15,11 @@ public static class ToolSchemas
 
     /// <summary>
     /// Register the standard tool schemas with a ModelClient.
-    /// Uses abbreviated descriptions for small models (context window &lt; 16K).
+    /// Uses abbreviated descriptions for small models (context window &lt; 16K or ≤ 8B params).
     /// </summary>
-    public static void RegisterAll(IModelClient client, int contextWindow = 32768)
+    public static void RegisterAll(IModelClient client, int contextWindow = 32768, string modelName = "")
     {
-        var small = contextWindow < SmallModelThreshold;
+        var small = contextWindow < SmallModelThreshold || IsSmallModelName(modelName);
 
         // Tool 1: read
         client.RegisterTool("read",
@@ -148,5 +148,19 @@ public static class ToolSchemas
             result["additionalProperties"] = false;
 
         return result;
+    }
+
+    /// <summary>
+    /// Check if a model name indicates ≤ 8B parameters (e.g. "qwen3:4b", "llama3.1:8b", "phi-3.5:3.8b").
+    /// </summary>
+    private static bool IsSmallModelName(string modelName)
+    {
+        if (string.IsNullOrEmpty(modelName)) return false;
+        var name = modelName.ToLowerInvariant();
+        var match = System.Text.RegularExpressions.Regex.Match(name, @"(\d+(?:\.\d+)?)\s*b");
+        if (!match.Success) return false;
+        if (double.TryParse(match.Groups[1].Value, out var billions))
+            return billions <= 8.0;
+        return false;
     }
 }

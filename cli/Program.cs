@@ -277,7 +277,7 @@ class Program
                 Console.WriteLine($"Context window: {contextWindow} (from config)");
             }
 
-            ToolSchemas.RegisterAll(modelClient, contextWindow);
+            ToolSchemas.RegisterAll(modelClient, contextWindow, resolved.ModelId);
 
             var toolExecutor = new ToolExecutor(config.WorkingDirectory, blockDestructive);
             using var logger = new SessionLogger(config.ModelName, config.WorkingDirectory);
