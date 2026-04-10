@@ -38,7 +38,7 @@
 
 For a 3–5K LOC agent harness, these language features matter:
 
-- **`record` types** — eliminate the struct-copy bugs found in delta-code's `LaneRun`/`LaneSpec`
+- **`record` types** — eliminate struct-copy bugs found in the predecessor's data types
 - **Pattern matching with exhaustiveness** — prevent "unhandled lane type" bugs
 - **`Result<T, TError>`** (via `OneOf` or custom) — eliminate `if err != nil` ceremony
 - **`async`/`await`** — far superior to Go's goroutine-plus-channels for this use case
@@ -81,5 +81,5 @@ little_helper/
 ## References
 
 - AutoCodeBench: https://arxiv.org/abs/2508.09101
-- Delta-code audit: `../delta-code/AUDIT_20260409.md`
-- Agent harness research: `RESEARCH.md`
+- Agent harness research: [RESEARCH.md](RESEARCH.md)
+- Harness feedback: [coding-harness-feedback](https://github.com/sleepyeldrazi/coding-harness-feedback)

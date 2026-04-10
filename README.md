@@ -4,7 +4,7 @@ A lean agent harness for small/local/cloud models. General-purpose — coding ta
 
 **Design principle:** Get out of the model's way. The model knows what to do — give it tools, stay silent, observe the result.
 
-**Predecessor:** [delta-code](../delta-code/) (asgard-core, Go, ~33.5K LOC) — over-engineered, 5–25% success rate. This is the replacement.
+**Predecessor:** Internal Go agent (~33.5K LOC) — over-engineered, 5–25% success rate. This is the replacement.
 
 ---
 
@@ -145,7 +145,7 @@ Key differences handled by `AnthropicClient`:
 
 ## Design Rules (Non-Negotiable)
 
-Each rule addresses a failure mode found in delta-code or confirmed by agent research.
+Each rule addresses a failure mode found in the predecessor or confirmed by agent research.
 
 ### 1. One System Message, Under 1000 Tokens
 
@@ -272,4 +272,4 @@ This avoids adding a 6th tool (violating Rule #2) while achieving the same conte
 
 ---
 
-*Built on the ashes of asgard-core. Less code, more working.*
+*Less code, more working.*
