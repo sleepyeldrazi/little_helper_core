@@ -62,6 +62,24 @@ public static class ToolSchemas
             }
             """));
 
+        // Tool 3b: edit (also aliased as "patch")
+        // Prefer edit over write for existing files -- saves context window
+        client.RegisterTool("edit",
+            small ? "Edit a file by replacing text." :
+                "Edit a file by finding and replacing text. old_string must uniquely match. Use replace_all for multiple matches.",
+            NormalizeToolSchema("""
+            {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "File path relative to working directory" },
+                    "old_string": { "type": "string", "description": "Exact text to find (must be unique unless replace_all is true)" },
+                    "new_string": { "type": "string", "description": "Replacement text (use empty string to delete)" },
+                    "replace_all": { "type": "boolean", "description": "Replace all occurrences instead of requiring unique match (default: false)" }
+                },
+                "required": ["path", "old_string", "new_string"]
+            }
+            """));
+
         // Tool 4: search
         client.RegisterTool("search",
             small ? "Search files with grep." : "Search file contents with grep/ripgrep.",

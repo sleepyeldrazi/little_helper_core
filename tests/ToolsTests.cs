@@ -187,4 +187,94 @@ public class ToolsTests
         Assert.True(result.IsError);
         Assert.Contains("Unknown tool", result.Output);
     }
+
+    // --- Edit tool tests ---
+
+    [Fact]
+    public async Task Edit_ReplacesUniqueMatch()
+    {
+        File.WriteAllText(Path.Combine(_testDir, "edit1.txt"), "hello world\nfoo bar\nhello again");
+        var executor = CreateExecutor();
+        var result = await executor.Execute("edit",
+            JsonDocument.Parse("{\"path\": \"edit1.txt\", \"old_string\": \"foo bar\", \"new_string\": \"baz qux\"}").RootElement);
+        Assert.False(result.IsError);
+        Assert.Contains("Replaced 1 occurrence", result.Output);
+        var content = File.ReadAllText(Path.Combine(_testDir, "edit1.txt"));
+        Assert.Equal("hello world\nbaz qux\nhello again", content);
+    }
+
+    [Fact]
+    public async Task Edit_PatchAliasWorks()
+    {
+        File.WriteAllText(Path.Combine(_testDir, "patch1.txt"), "old text");
+        var executor = CreateExecutor();
+        var result = await executor.Execute("patch",
+            JsonDocument.Parse("{\"path\": \"patch1.txt\", \"old_string\": \"old text\", \"new_string\": \"new text\"}").RootElement);
+        Assert.False(result.IsError);
+        Assert.Equal("new text", File.ReadAllText(Path.Combine(_testDir, "patch1.txt")));
+    }
+
+    [Fact]
+    public async Task Edit_NotFound_ReturnsError()
+    {
+        File.WriteAllText(Path.Combine(_testDir, "edit2.txt"), "hello world");
+        var executor = CreateExecutor();
+        var result = await executor.Execute("edit",
+            JsonDocument.Parse("{\"path\": \"edit2.txt\", \"old_string\": \"missing\", \"new_string\": \"replacement\"}").RootElement);
+        Assert.True(result.IsError);
+        Assert.Contains("not found", result.Output);
+    }
+
+    [Fact]
+    public async Task Edit_DuplicateMatch_ReturnsError()
+    {
+        File.WriteAllText(Path.Combine(_testDir, "edit3.txt"), "hello\nhello\nhello");
+        var executor = CreateExecutor();
+        var result = await executor.Execute("edit",
+            JsonDocument.Parse("{\"path\": \"edit3.txt\", \"old_string\": \"hello\", \"new_string\": \"hi\"}").RootElement);
+        Assert.True(result.IsError);
+        Assert.Contains("3 times", result.Output);
+    }
+
+    [Fact]
+    public async Task Edit_ReplaceAll_ReplacesAll()
+    {
+        File.WriteAllText(Path.Combine(_testDir, "edit4.txt"), "hello\nhello\nhello");
+        var executor = CreateExecutor();
+        var result = await executor.Execute("edit",
+            JsonDocument.Parse("{\"path\": \"edit4.txt\", \"old_string\": \"hello\", \"new_string\": \"hi\", \"replace_all\": true}").RootElement);
+        Assert.False(result.IsError);
+        Assert.Contains("Replaced 3 occurrences", result.Output);
+        Assert.Equal("hi\nhi\nhi", File.ReadAllText(Path.Combine(_testDir, "edit4.txt")));
+    }
+
+    [Fact]
+    public async Task Edit_DeleteWithEmptyNewString()
+    {
+        File.WriteAllText(Path.Combine(_testDir, "edit5.txt"), "line1\ntarget\nline3");
+        var executor = CreateExecutor();
+        var result = await executor.Execute("edit",
+            JsonDocument.Parse("{\"path\": \"edit5.txt\", \"old_string\": \"target\\n\", \"new_string\": \"\"}").RootElement);
+        Assert.False(result.IsError);
+        Assert.Equal("line1\nline3", File.ReadAllText(Path.Combine(_testDir, "edit5.txt")));
+    }
+
+    [Fact]
+    public async Task Edit_NonexistentFile_ReturnsError()
+    {
+        var executor = CreateExecutor();
+        var result = await executor.Execute("edit",
+            JsonDocument.Parse("{\"path\": \"nope.txt\", \"old_string\": \"x\", \"new_string\": \"y\"}").RootElement);
+        Assert.True(result.IsError);
+        Assert.Contains("not found", result.Output);
+    }
+
+    [Fact]
+    public async Task Edit_PathEscapeBlocked()
+    {
+        var executor = CreateExecutor();
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await executor.Execute("edit",
+                JsonDocument.Parse("{\"path\": \"../../tmp/evil.txt\", \"old_string\": \"x\", \"new_string\": \"y\"}").RootElement));
+    }
 }

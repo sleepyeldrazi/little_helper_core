@@ -95,7 +95,7 @@ public class PromptBuilder
         {
             sb.AppendLine("1. Think before acting. Read existing files before writing code because understanding prevents errors.");
             sb.AppendLine("2. Be concise in output but thorough in reasoning because efficiency matters.");
-            sb.AppendLine("3. Prefer editing over rewriting whole files because precision preserves intent.");
+            sb.AppendLine("3. Prefer the edit tool over rewriting whole files with write because it saves tokens and preserves unchanged code.");
             sb.AppendLine("4. Do not re-read files you have already read unless the file may have changed because redundancy wastes steps.");
             sb.AppendLine("5. Test your code before declaring done because verification catches bugs.");
             sb.AppendLine("6. Keep solutions simple and direct because complexity is the enemy of reliability.");
@@ -105,12 +105,12 @@ public class PromptBuilder
         // Tool guidance
         if (IsTinyModel)
         {
-            sb.AppendLine("Tools: read, run, write, search.");
+            sb.AppendLine("Tools: read, run, write, edit, search.");
             sb.AppendLine("When done, respond without tool calls.");
         }
         else
         {
-            sb.AppendLine("You have access to these tools: read, run, write, search, bash.");
+            sb.AppendLine("You have access to these tools: read, run, write, edit, search, bash.");
             sb.AppendLine("Use them to complete the task. When done, respond without tool calls.");
         }
         sb.AppendLine();

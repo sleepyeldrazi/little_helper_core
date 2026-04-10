@@ -52,9 +52,11 @@ public class ToolExecutor
             "read" => await Read(arguments),
             "run" => await Run(arguments),
             "write" => await Write(arguments),
+            "edit" => await Edit(arguments),
             "search" => await SearchAsync(arguments),
             "bash" => await Run(arguments),  // bash is alias for run
             "spawn" => await Spawn(arguments), // delegate to sub-agent in tmux
+            "patch" => await Edit(arguments),  // patch is alias for edit
             _ => new ToolResult($"Unknown tool: {toolName}", IsError: true)
         };
     }
@@ -73,6 +75,7 @@ public class ToolExecutor
         {
             "read" => ValidateRead(args),
             "write" => ValidateWrite(args),
+            "edit" or "patch" => ValidateEdit(args),
             "run" or "bash" => ValidateRun(args),
             "search" => ValidateSearch(args),
             "spawn" => ValidateSpawn(args),
@@ -102,6 +105,23 @@ public class ToolExecutor
             return "Argument 'path' must be a non-empty string.";
         if (!args.TryGetProperty("content", out _))
             return "Missing required argument 'content' for write tool.";
+        return null;
+    }
+
+    private static string? ValidateEdit(JsonElement args)
+    {
+        if (!args.TryGetProperty("path", out var pathProp))
+            return "Missing required argument 'path' for edit tool.";
+        if (pathProp.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(pathProp.GetString()))
+            return "Argument 'path' must be a non-empty string.";
+        if (!args.TryGetProperty("old_string", out var oldProp))
+            return "Missing required argument 'old_string' for edit tool.";
+        if (oldProp.ValueKind != JsonValueKind.String)
+            return "Argument 'old_string' must be a string.";
+        if (!args.TryGetProperty("new_string", out var newProp))
+            return "Missing required argument 'new_string' for edit tool.";
+        if (newProp.ValueKind != JsonValueKind.String)
+            return "Argument 'new_string' must be a string.";
         return null;
     }
 
@@ -221,6 +241,121 @@ public class ToolExecutor
         {
             return new ToolResult($"Error writing file: {ex.Message}", IsError: true, FilePath: path);
         }
+    }
+
+    /// <summary>
+    /// Edit a file by replacing old_string with new_string.
+    /// old_string must be unique in the file (fails if ambiguous).
+    /// Use replace_all for non-unique matches. More efficient than rewrite for small changes.
+    /// </summary>
+    private async Task<ToolResult> Edit(JsonElement args)
+    {
+        // Edit enforces path escape check — same as write
+        var path = ResolvePath(args.GetProperty("path").GetString()!, allowEscape: false);
+        var oldString = args.GetProperty("old_string").GetString() ?? "";
+        var newString = args.GetProperty("new_string").GetString() ?? "";
+        var replaceAll = args.TryGetProperty("replace_all", out var ra) && ra.ValueKind == JsonValueKind.True;
+
+        if (!File.Exists(path))
+            return new ToolResult($"File not found: {path}", IsError: true, FilePath: path);
+
+        if (string.IsNullOrEmpty(oldString))
+            return new ToolResult("old_string cannot be empty. Use the write tool to create or overwrite files.", IsError: true);
+
+        try
+        {
+            var content = await File.ReadAllTextAsync(path);
+
+            // Check if old_string exists in file
+            if (!content.Contains(oldString))
+            {
+                // Try to help with a fuzzy hint
+                var searchLines = oldString.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                if (searchLines.Length > 0)
+                {
+                    var firstLine = searchLines[0].Trim();
+                    var matches = content.Split('\n')
+                        .Select((line, idx) => (line, idx))
+                        .Where(t => t.line.Contains(firstLine))
+                        .Take(3)
+                        .ToList();
+
+                    if (matches.Count > 0)
+                    {
+                        var hint = string.Join("\n", matches.Select(m => $"  Line {m.idx + 1}: {m.line.Trim()}"));
+                        return new ToolResult(
+                            $"old_string not found in {GetDisplayPath(path)}.\n" +
+                            $"Similar lines found (the exact whitespace/indentation may differ):\n{hint}\n\n" +
+                            $"Tip: Use the read tool to see the exact content, then retry with the exact text.",
+                            IsError: true, FilePath: path);
+                    }
+                }
+
+                return new ToolResult(
+                    $"old_string not found in {GetDisplayPath(path)}. " +
+                    $"Use the read tool to see the current file content.",
+                    IsError: true, FilePath: path);
+            }
+
+            // Check uniqueness (unless replace_all)
+            if (!replaceAll)
+            {
+                var count = CountOccurrences(content, oldString);
+                if (count > 1)
+                {
+                    return new ToolResult(
+                        $"old_string found {count} times in {GetDisplayPath(path)}. " +
+                        $"It must be unique for a single replacement. " +
+                        $"Either include more surrounding context to make it unique, " +
+                        $"or set replace_all to true to replace all occurrences.",
+                        IsError: true, FilePath: path);
+                }
+            }
+
+            // Perform replacement
+            var newContent = replaceAll
+                ? content.Replace(oldString, newString)
+                : ReplaceFirst(content, oldString, newString);
+
+            await File.WriteAllTextAsync(path, newContent);
+
+            // Build summary
+            var oldLines = oldString.Split('\n').Length;
+            var newLines = newString.Split('\n').Length;
+            var action = replaceAll ? $"Replaced {CountOccurrences(content, oldString)} occurrences" : "Replaced 1 occurrence";
+            var displayPath = GetDisplayPath(path);
+            var summary = newString.Length == 0
+                ? $"{action} (deleted {oldLines} lines) in {displayPath}"
+                : newString.Length < oldString.Length
+                    ? $"{action} ({oldLines} -> {newLines} lines) in {displayPath}"
+                    : $"{action} ({oldLines} -> {newLines} lines) in {displayPath}";
+
+            return new ToolResult(summary, IsError: false, FilePath: path);
+        }
+        catch (Exception ex)
+        {
+            return new ToolResult($"Error editing file: {ex.Message}", IsError: true, FilePath: path);
+        }
+    }
+
+    /// <summary>Count non-overlapping occurrences of a string.</summary>
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        int count = 0;
+        int pos = 0;
+        while ((pos = haystack.IndexOf(needle, pos, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            pos += needle.Length;
+        }
+        return count;
+    }
+
+    /// <summary>Replace the first occurrence of oldString with newString.</summary>
+    private static string ReplaceFirst(string text, string oldString, string newString)
+    {
+        var pos = text.IndexOf(oldString, StringComparison.Ordinal);
+        return pos < 0 ? text : string.Concat(text.AsSpan(0, pos), newString, text.AsSpan(pos + oldString.Length));
     }
 
     /// <summary>Search file contents with grep/ripgrep. Limited to 200 results.</summary>
