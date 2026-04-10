@@ -92,6 +92,27 @@ public static class ToolSchemas
                 "required": ["command"]
             }
             """));
+
+        // Tool 6: spawn — delegate a task to a sub-agent running in tmux
+        // Only registered when enabled by the TUI. See SubAgentManager.
+        // Schema is provided here for reference; registration is conditional.
+    }
+
+    /// <summary>Register the spawn tool schema. Called by TUI when sub-agents are enabled.</summary>
+    public static void RegisterSpawn(IModelClient client)
+    {
+        client.RegisterTool("spawn",
+            "Delegate a task to a sub-agent running in tmux. Returns a window name you can check with capture-pane.",
+            NormalizeToolSchema("""
+            {
+                "type": "object",
+                "properties": {
+                    "task": { "type": "string", "description": "The task description for the sub-agent" },
+                    "type": { "type": "string", "description": "Agent tier: 'small' for quick lookup/classification, 'complex' for multi-step analysis", "enum": ["small", "complex"] }
+                },
+                "required": ["task", "type"]
+            }
+            """));
     }
 
     /// <summary>

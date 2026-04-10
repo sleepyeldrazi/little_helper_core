@@ -17,6 +17,13 @@ public class ToolExecutor
     private readonly HashSet<string> _destructiveCommands;
     private readonly bool _blockDestructive;
 
+    /// <summary>
+    /// Sub-agent spawn delegate. Set by the TUI to wire in tmux-based spawning.
+    /// Arguments: (task, type) -> result string.
+    /// When null, the spawn tool returns an error.
+    /// </summary>
+    public Func<string, string, Task<ToolResult>>? SpawnHandler { get; set; }
+
     public ToolExecutor(string workingDirectory, bool blockDestructive = false)
     {
         _workingDir = Path.GetFullPath(workingDirectory);
@@ -47,6 +54,7 @@ public class ToolExecutor
             "write" => await Write(arguments),
             "search" => await SearchAsync(arguments),
             "bash" => await Run(arguments),  // bash is alias for run
+            "spawn" => await Spawn(arguments), // delegate to sub-agent in tmux
             _ => new ToolResult($"Unknown tool: {toolName}", IsError: true)
         };
     }
@@ -67,6 +75,7 @@ public class ToolExecutor
             "write" => ValidateWrite(args),
             "run" or "bash" => ValidateRun(args),
             "search" => ValidateSearch(args),
+            "spawn" => ValidateSpawn(args),
             _ => null // Unknown tools are caught by Execute
         };
     }
@@ -113,6 +122,21 @@ public class ToolExecutor
             return "Missing required argument 'pattern' for search tool.";
         if (patProp.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(patProp.GetString()))
             return "Argument 'pattern' must be a non-empty string.";
+        return null;
+    }
+
+    private static string? ValidateSpawn(JsonElement args)
+    {
+        if (!args.TryGetProperty("task", out var taskProp))
+            return "Missing required argument 'task' for spawn tool.";
+        if (taskProp.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(taskProp.GetString()))
+            return "Argument 'task' must be a non-empty string.";
+        if (args.TryGetProperty("type", out var typeProp))
+        {
+            var typeVal = typeProp.GetString();
+            if (typeVal != "small" && typeVal != "complex")
+                return "Argument 'type' must be 'small' or 'complex'.";
+        }
         return null;
     }
 
@@ -233,6 +257,23 @@ public class ToolExecutor
         if (string.IsNullOrWhiteSpace(result.Output))
             return new ToolResult("No matches found.", IsError: false);
         return new ToolResult(result.Output, IsError: false);
+    }
+
+    /// <summary>
+    /// Delegate a task to a sub-agent running in tmux.
+    /// Requires SpawnHandler to be set by the TUI. Returns an error if not configured.
+    /// </summary>
+    private async Task<ToolResult> Spawn(JsonElement args)
+    {
+        if (SpawnHandler == null)
+            return new ToolResult(
+                "Sub-agents not configured. Use :subagent to set up before using the spawn tool.",
+                IsError: true);
+
+        var task = args.GetProperty("task").GetString()!;
+        var type = args.TryGetProperty("type", out var t) ? t.GetString() ?? "small" : "small";
+
+        return await SpawnHandler(task, type);
     }
 
     // --- Helpers ---
