@@ -114,7 +114,7 @@ public class AnthropicClient : IModelClient
                 if (response == null && observer != null)
                 {
                     observer.OnError("[Streaming failed, retrying without streaming]");
-                    var nonStreamBody = BuildRequestBody(apiMessages, systemPrompt, toolSchemas, enableStreaming: false);
+                    var nonStreamBody = BuildRequestBody(apiMessages, systemPrompt, toolSchemas, streaming: false);
                     response = await SendRequest(nonStreamBody, ct);
                 }
             }
