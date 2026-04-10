@@ -18,6 +18,7 @@ public class ModelClient : IModelClient
     private readonly List<ToolDef> _tools;
     private int _totalTokensUsed;
     private bool _disposed;
+    private bool _toolsDisabled; // Set to true when GBNF 400 detected, retry without tools
 
     public record ToolDef(string Name, string Description, JsonElement ParametersSchema);
 
@@ -160,7 +161,8 @@ public class ModelClient : IModelClient
         {
             ct.ThrowIfCancellationRequested();
 
-            var requestBody = BuildRequestBody(messages, toolSchemas, enableStreaming);
+            var useTools = !_toolsDisabled && _tools.Count > 0;
+            var requestBody = BuildRequestBody(messages, useTools ? toolSchemas : EmptySchema(), enableStreaming);
             JsonElement? response;
 
             if (enableStreaming)
@@ -170,13 +172,22 @@ public class ModelClient : IModelClient
                 if (response == null && observer != null)
                 {
                     observer.OnError("[Streaming failed, retrying without streaming]");
-                    var nonStreamBody = BuildRequestBody(messages, toolSchemas, streaming: false);
-                    response = await SendRequest(nonStreamBody, ct);
+                    var nonStreamBody = BuildRequestBody(messages, useTools ? toolSchemas : EmptySchema(), streaming: false);
+                    response = await SendRequest(nonStreamBody, ct, observer);
                 }
             }
             else
             {
-                response = await SendRequest(requestBody, ct);
+                response = await SendRequest(requestBody, ct, observer);
+            }
+
+            if (response == null && useTools && attempt == 0)
+            {
+                // First attempt failed with tools -- retry without tools (GBNF fallback)
+                _toolsDisabled = true;
+                observer?.OnError("WARN: API request failed with tool schemas, retrying without tools");
+                var noToolsBody = BuildRequestBody(messages, EmptySchema(), enableStreaming);
+                response = await SendRequest(noToolsBody, ct, observer);
             }
 
             if (response == null)
@@ -189,7 +200,7 @@ public class ModelClient : IModelClient
                 return new ModelResponse("ERROR: No response from model", new List<ToolCall>(), 0);
             }
 
-            var parsed = ParseResponse(response.Value);
+            var parsed = ParseResponse(response.Value, observer);
             _totalTokensUsed += parsed.TokensUsed;
 
             if (parsed.ToolCalls.Count == 0 && string.IsNullOrWhiteSpace(parsed.Content) && attempt < maxRetries)
@@ -217,7 +228,7 @@ public class ModelClient : IModelClient
         };
         if (streaming)
             body["stream"] = true;
-        if (_tools.Count > 0)
+        if (toolSchemas.GetArrayLength() > 0)
             body["tools"] = toolSchemas;
 
         return JsonSerializer.Serialize(body, new JsonSerializerOptions
@@ -247,10 +258,15 @@ public class ModelClient : IModelClient
         return JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(tools))!;
     }
 
+    /// <summary>Empty JSON array for no-tool requests.</summary>
+    private static JsonElement EmptySchema() =>
+        JsonSerializer.Deserialize<JsonElement>("[]");
+
     /// <summary>
     /// Send a non-streaming HTTP request. Propagates cancellation immediately.
     /// </summary>
-    private async Task<JsonElement?> SendRequest(string requestBody, CancellationToken ct)
+    private async Task<JsonElement?> SendRequest(string requestBody, CancellationToken ct,
+        IAgentObserver? observer = null)
     {
         try
         {
@@ -260,7 +276,10 @@ public class ModelClient : IModelClient
             if (!response.IsSuccessStatusCode)
             {
                 var errorBody = await response.Content.ReadAsStringAsync(ct);
-                Console.Error.WriteLine($"Model API error ({response.StatusCode}): {errorBody}");
+                if (observer != null)
+                    observer.OnError($"Model API error ({response.StatusCode}): {errorBody}");
+                else
+                    Console.Error.WriteLine($"Model API error ({response.StatusCode}): {errorBody}");
                 return null;
             }
 
@@ -270,13 +289,16 @@ public class ModelClient : IModelClient
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Model request failed: {ex.Message}");
+            if (observer != null)
+                observer.OnError($"Model request failed: {ex.Message}");
+            else
+                Console.Error.WriteLine($"Model request failed: {ex.Message}");
             return null;
         }
     }
 
     /// <summary>Parse the API response into a ModelResponse.</summary>
-    private ModelResponse ParseResponse(JsonElement response)
+    private ModelResponse ParseResponse(JsonElement response, IAgentObserver? observer = null)
     {
         string content = "";
         var toolCalls = new List<ToolCall>();
@@ -325,7 +347,7 @@ public class ModelClient : IModelClient
                 var id = tc.GetProperty("id").GetString() ?? Guid.NewGuid().ToString();
                 var func = tc.GetProperty("function");
                 var rawName = func.GetProperty("name").GetString() ?? "";
-                var matchedName = ResolveToolName(rawName);
+                var matchedName = ResolveToolName(rawName, observer);
                 var rawArgs = func.TryGetProperty("arguments", out var ap) ? ap.GetString() ?? "{}" : "{}";
                 var parsedArgs = JsonRepair.Repair(rawArgs);
                 toolCalls.Add(new ToolCall(id, matchedName, parsedArgs));
@@ -350,7 +372,7 @@ public class ModelClient : IModelClient
     /// Fuzzy tool name matching. Normalizes to lowercase, strips underscores/hyphens.
     /// Falls back to Levenshtein distance ≤ 2.
     /// </summary>
-    private string ResolveToolName(string rawName)
+    private string ResolveToolName(string rawName, IAgentObserver? observer = null)
     {
         var normalized = rawName.ToLowerInvariant().Replace("_", "").Replace("-", "");
 
@@ -365,12 +387,16 @@ public class ModelClient : IModelClient
             var tn = tool.Name.ToLowerInvariant().Replace("_", "").Replace("-", "");
             if (JsonRepair.LevenshteinDistance(normalized, tn) <= 2)
             {
-                Console.Error.WriteLine($"WARN: Fuzzy matched tool '{rawName}' -> '{tool.Name}'");
+                (observer != null
+                    ? (Action<string>)(m => observer.OnError(m))
+                    : m => Console.Error.WriteLine(m))($"WARN: Fuzzy matched tool '{rawName}' -> '{tool.Name}'");
                 return tool.Name;
             }
         }
 
-        Console.Error.WriteLine($"WARN: Unknown tool '{rawName}', passing through");
+        (observer != null
+            ? (Action<string>)(m => observer.OnError(m))
+            : m => Console.Error.WriteLine(m))($"WARN: Unknown tool '{rawName}', passing through");
         return rawName;
     }
 

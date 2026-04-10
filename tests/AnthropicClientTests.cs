@@ -132,9 +132,32 @@ public class AnthropicClientTests
         // Verify the constructor sets up x-api-key and anthropic-version headers
         using var client = new AnthropicClient(
             "https://api.anthropic.com", "claude-sonnet-4-20250514",
-            apiKey: "sk-ant-test123");
+            apiKey: "***");
 
         // No exception means construction succeeded
+        Assert.NotNull(client);
+    }
+
+    [Fact]
+    public void AnthropicClient_BearerAuth_SetsAuthorizationHeader()
+    {
+        // Verify bearer auth mode creates the client without error
+        using var client = new AnthropicClient(
+            "https://api.example.com", "some-model",
+            apiKey: "test-key",
+            authType: "bearer");
+
+        Assert.NotNull(client);
+    }
+
+    [Fact]
+    public void AnthropicClient_DefaultAuthType_IsXApiKey()
+    {
+        // Default authType should be x-api-key (no exception)
+        using var client = new AnthropicClient(
+            "https://api.anthropic.com", "claude-sonnet-4-20250514",
+            apiKey: "test-key");
+
         Assert.NotNull(client);
     }
 

@@ -135,9 +135,9 @@ public class SkillDiscovery
 
             return new SkillDef(name, description, filePath);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            Console.Error.WriteLine($"Error parsing skill file {filePath}: {ex.Message}");
+            // Silently skip malformed skill files
             return null;
         }
     }

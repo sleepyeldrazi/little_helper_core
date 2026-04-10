@@ -23,7 +23,7 @@ internal static class AnthropicStreaming
             if (!response.IsSuccessStatusCode)
             {
                 var errorBody = await response.Content.ReadAsStringAsync(ct);
-                Console.Error.WriteLine($"Anthropic streaming error ({response.StatusCode}): {errorBody}");
+                observer.OnError($"Anthropic streaming error ({response.StatusCode}): {errorBody}");
                 return null;
             }
 
@@ -143,7 +143,7 @@ internal static class AnthropicStreaming
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Anthropic streaming failed: {ex.Message}");
+            observer.OnError($"Anthropic streaming failed: {ex.Message}");
             return null;
         }
     }

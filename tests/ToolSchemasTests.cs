@@ -9,8 +9,10 @@ public class ToolSchemasTests
         JsonSerializer.Serialize(el);
 
     [Fact]
-    public void NormalizeToolSchema_AddsAdditionalPropertiesFalse_TopLevel()
+    public void NormalizeToolSchema_DoesNotAddAdditionalProperties()
     {
+        // NormalizeToolSchema intentionally omits additionalProperties: false
+        // because it breaks llama.cpp's GBNF grammar generator
         var schema = ToolSchemas.NormalizeToolSchema("""
             {
                 "type": "object",
@@ -22,7 +24,7 @@ public class ToolSchemasTests
             """);
 
         var json = ToJson(schema);
-        Assert.Contains("\"additionalProperties\":false", json);
+        Assert.DoesNotContain("additionalProperties", json);
     }
 
     [Fact]
@@ -58,8 +60,9 @@ public class ToolSchemasTests
     }
 
     [Fact]
-    public void NormalizeToolSchema_NestedObjectGetsAdditionalPropertiesFalse()
+    public void NormalizeToolSchema_NestedObjectNoAdditionalProperties()
     {
+        // Nested objects should also NOT get additionalProperties: false
         var schema = ToolSchemas.NormalizeToolSchema("""
             {
                 "type": "object",
@@ -75,13 +78,11 @@ public class ToolSchemasTests
             """);
 
         var json = ToJson(schema);
-        // Should appear at least twice (top-level + nested object)
-        var count = json.Split("\"additionalProperties\":false").Length - 1;
-        Assert.True(count >= 2, $"Expected >= 2 additionalProperties:false, got {count}\nJSON: {json}");
+        Assert.DoesNotContain("additionalProperties", json);
     }
 
     [Fact]
-    public void NormalizeToolSchema_StringPropertyNotObject_NoExtraAdditionalProperties()
+    public void NormalizeToolSchema_StringPropertyNotObject_NoExtraProperties()
     {
         var schema = ToolSchemas.NormalizeToolSchema("""
             {
@@ -93,8 +94,8 @@ public class ToolSchemasTests
             """);
 
         var json = ToJson(schema);
-        var count = json.Split("\"additionalProperties\":false").Length - 1;
-        Assert.Equal(1, count);
+        // Should have exactly 0 additionalProperties (we don't add it at all)
+        Assert.DoesNotContain("additionalProperties", json);
     }
 
     [Fact]

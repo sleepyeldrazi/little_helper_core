@@ -29,6 +29,9 @@ public class Agent
     /// <summary>Read-only access to conversation history for TUI.</summary>
     public IReadOnlyList<ChatMessage> History => _messages.AsReadOnly();
 
+    /// <summary>Clear conversation history. Call before RunAsync to start fresh.</summary>
+    public void ClearHistory() => _messages = new List<ChatMessage>();
+
     /// <summary>Access to the control surface (pause/resume/inject/intercept).</summary>
     public AgentControl Control => _control;
 
@@ -51,16 +54,22 @@ public class Agent
 
     /// <summary>
     /// Run the agent loop until done or step limit reached.
+    /// When clearHistory is false, appends the user prompt to existing conversation
+    /// history, enabling multi-turn conversation.
     /// </summary>
-    public async Task<AgentResult> RunAsync(string userPrompt, CancellationToken ct = default)
+    public async Task<AgentResult> RunAsync(string userPrompt, CancellationToken ct = default,
+        bool clearHistory = true)
     {
         var state = AgentState.Planning;
-        _messages = new List<ChatMessage>();
+        if (clearHistory)
+        {
+            _messages = new List<ChatMessage>();
+        }
         int step = 0;
         int errorRecoveryCount = 0;
         string finalOutput = "";
 
-        // Reset state for each run (safe for reuse)
+        // Reset per-run state (safe for reuse)
         _filesChanged = new List<string>();
         Array.Clear(_recentObservations, 0, _recentObservations.Length);
         _observationIndex = 0;
@@ -82,8 +91,16 @@ public class Agent
             switch (state)
             {
                 case AgentState.Planning:
-                    Log("[State] Planning — building initial context");
-                    _messages = _promptBuilder.BuildInitialContext(userPrompt);
+                    if (clearHistory || _messages.Count == 0)
+                    {
+                        Log("[State] Planning — building initial context");
+                        _messages = _promptBuilder.BuildInitialContext(userPrompt);
+                    }
+                    else
+                    {
+                        Log("[State] Planning — continuing conversation");
+                        _messages.Add(ChatMessage.User(userPrompt));
+                    }
                     state = TransitionState(state, AgentState.Executing);
                     break;
 
@@ -273,14 +290,21 @@ public class Agent
         return nonNull.All(o => o == first);
     }
 
-    /// <summary>Log a message to stderr for debugging/progress tracking.</summary>
-    private static void Log(string message) => Console.Error.WriteLine(message);
+    /// <summary>Log a message via observer (or stderr fallback).</summary>
+    private void Log(string message)
+    {
+        if (_observer != null)
+            _observer.OnError(message);
+        else
+            Console.Error.WriteLine(message);
+    }
 
     /// <summary>
     /// Format tool arguments into a short human-readable summary for logging.
     /// read -> path, write -> path, run/bash -> command, search -> pattern.
+    /// Public so TUI and other consumers can reuse the formatting.
     /// </summary>
-    private static string FormatToolDetail(string toolName, System.Text.Json.JsonElement args)
+    public static string FormatToolDetail(string toolName, System.Text.Json.JsonElement args)
     {
         try
         {

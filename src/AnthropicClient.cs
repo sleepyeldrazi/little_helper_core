@@ -18,6 +18,7 @@ public class AnthropicClient : IModelClient
     private readonly List<ToolDef> _tools = new();
     private int _totalTokensUsed;
     private bool _disposed;
+    private bool _toolsDisabled; // Set to true when GBNF 400 detected, retry without tools
 
     public record ToolDef(string Name, string Description, JsonElement ParametersSchema);
 
@@ -26,16 +27,22 @@ public class AnthropicClient : IModelClient
     public List<string> ThinkingLog { get; } = new();
 
     public AnthropicClient(string endpoint, string model, double temperature = 0.3,
-        string? apiKey = null, Dictionary<string, string>? extraHeaders = null)
+        string? apiKey = null, Dictionary<string, string>? extraHeaders = null,
+        string authType = "x-api-key")
     {
         _endpoint = endpoint.TrimEnd('/');
         _model = model;
         _temperature = temperature;
         _http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
 
-        // Anthropic uses x-api-key header, not Authorization: Bearer
+        // Auth: "bearer" sends Authorization: Bearer, "x-api-key" (default) sends x-api-key header
         if (!string.IsNullOrEmpty(apiKey))
-            _http.DefaultRequestHeaders.TryAddWithoutValidation("x-api-key", apiKey);
+        {
+            if (authType.Equals("bearer", StringComparison.OrdinalIgnoreCase))
+                _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            else
+                _http.DefaultRequestHeaders.TryAddWithoutValidation("x-api-key", apiKey);
+        }
 
         // Required Anthropic version header
         _http.DefaultRequestHeaders.TryAddWithoutValidation("anthropic-version", "2023-06-01");
@@ -104,7 +111,8 @@ public class AnthropicClient : IModelClient
             // Extract system message (Anthropic puts it in a top-level field)
             var systemPrompt = ExtractSystemPrompt(messages);
             var apiMessages = ConvertMessages(messages);
-            var toolSchemas = BuildToolSchemas();
+            var useTools = !_toolsDisabled && _tools.Count > 0;
+            var toolSchemas = useTools ? BuildToolSchemas() : EmptySchema();
             var requestBody = BuildRequestBody(apiMessages, systemPrompt, toolSchemas, enableStreaming);
 
             JsonElement? response;
@@ -115,11 +123,20 @@ public class AnthropicClient : IModelClient
                 {
                     observer.OnError("[Streaming failed, retrying without streaming]");
                     var nonStreamBody = BuildRequestBody(apiMessages, systemPrompt, toolSchemas, streaming: false);
-                    response = await SendRequest(nonStreamBody, ct);
+                    response = await SendRequest(nonStreamBody, ct, observer);
                 }
             }
             else
-                response = await SendRequest(requestBody, ct);
+                response = await SendRequest(requestBody, ct, observer);
+
+            if (response == null && useTools && attempt == 0)
+            {
+                // First attempt failed with tools -- retry without tools (GBNF fallback)
+                _toolsDisabled = true;
+                observer?.OnError("WARN: API request failed with tool schemas, retrying without tools");
+                var noToolsBody = BuildRequestBody(apiMessages, systemPrompt, EmptySchema(), enableStreaming);
+                response = await SendRequest(noToolsBody, ct, observer);
+            }
 
             if (response == null)
             {
@@ -226,7 +243,7 @@ public class AnthropicClient : IModelClient
         };
         if (systemPrompt != null)
             body["system"] = systemPrompt;
-        if (_tools.Count > 0)
+        if (toolSchemas.GetArrayLength() > 0)
             body["tools"] = toolSchemas;
         if (streaming)
             body["stream"] = true;
@@ -254,7 +271,12 @@ public class AnthropicClient : IModelClient
         return JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(tools))!;
     }
 
-    private async Task<JsonElement?> SendRequest(string requestBody, CancellationToken ct)
+    /// <summary>Empty JSON array for no-tool requests.</summary>
+    private static JsonElement EmptySchema() =>
+        JsonSerializer.Deserialize<JsonElement>("[]");
+
+    private async Task<JsonElement?> SendRequest(string requestBody, CancellationToken ct,
+        IAgentObserver? observer = null)
     {
         try
         {
@@ -263,7 +285,10 @@ public class AnthropicClient : IModelClient
             if (!response.IsSuccessStatusCode)
             {
                 var errorBody = await response.Content.ReadAsStringAsync(ct);
-                Console.Error.WriteLine($"Anthropic API error ({response.StatusCode}): {errorBody}");
+                if (observer != null)
+                    observer.OnError($"Anthropic API error ({response.StatusCode}): {errorBody}");
+                else
+                    Console.Error.WriteLine($"Anthropic API error ({response.StatusCode}): {errorBody}");
                 return null;
             }
             var json = await response.Content.ReadAsStringAsync(ct);
@@ -272,7 +297,10 @@ public class AnthropicClient : IModelClient
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Anthropic request failed: {ex.Message}");
+            if (observer != null)
+                observer.OnError($"Anthropic request failed: {ex.Message}");
+            else
+                Console.Error.WriteLine($"Anthropic request failed: {ex.Message}");
             return null;
         }
     }

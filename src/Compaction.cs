@@ -297,7 +297,7 @@ public static class CompactionExtensions
 
         if (result.TokensSaved > 0)
         {
-            Console.Error.WriteLine($"[Compaction] Saved {result.TokensSaved} tokens ({beforeTokens} -> {afterTokens})");
+            // Compaction info is reported via IAgentObserver.OnCompaction by the Agent
         }
 
         return result;

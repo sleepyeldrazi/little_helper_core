@@ -116,3 +116,87 @@ public class SessionLogger : IDisposable
         if (!_disposed) { _writer.Dispose(); _disposed = true; }
     }
 }
+
+/// <summary>
+/// Reads session JSONL logs back into typed records.
+/// Used by the TUI's SessionManager to avoid duplicating the log format.
+/// </summary>
+public static class SessionLogReader
+{
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        ReadCommentHandling = JsonCommentHandling.Skip
+    };
+
+    /// <summary>Read all entries from a session JSONL file.</summary>
+    public static List<SessionEntry> ReadEntries(string logPath)
+    {
+        var entries = new List<SessionEntry>();
+        if (!File.Exists(logPath)) return entries;
+
+        foreach (var line in File.ReadLines(logPath))
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            try
+            {
+                var entry = JsonSerializer.Deserialize<SessionEntry>(line, JsonOptions);
+                if (entry != null) entries.Add(entry);
+            }
+            catch { /* skip malformed lines */ }
+        }
+        return entries;
+    }
+
+    /// <summary>List all session log files in ~/.little_helper/logs/, newest first.</summary>
+    public static List<string> ListLogFiles()
+    {
+        var logDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".little_helper", "logs");
+        if (!Directory.Exists(logDir)) return new();
+
+        return Directory.GetFiles(logDir, "*.jsonl")
+            .OrderByDescending(f => File.GetLastWriteTime(f))
+            .ToList();
+    }
+}
+
+/// <summary>
+/// A single entry from a session JSONL log.
+/// Type can be: session_start, step, tool, message, session_end.
+/// </summary>
+public record SessionEntry
+{
+    public string? Type { get; init; }
+    public string? Timestamp { get; init; }
+    public string? Model { get; init; }
+    public string? WorkingDir { get; init; }
+
+    // Step fields
+    public int? Step { get; init; }
+    public int? Tokens { get; init; }
+    public int? ThinkingTokens { get; init; }
+    public int? ToolCalls { get; init; }
+    public string? Thinking { get; init; }
+    public string? Preview { get; init; }
+
+    // Tool fields
+    public string? Tool { get; init; }
+    public string? Args { get; init; }
+    public string? Result { get; init; }
+    public bool? IsError { get; init; }
+    public string? FilePath { get; init; }
+    public long? DurationMs { get; init; }
+
+    // Message fields
+    public string? Text { get; init; }
+    public string? ElapsedMs { get; init; }
+
+    // Session end fields
+    public bool? Success { get; init; }
+    public int? Steps { get; init; }
+    public int? TotalTokens { get; init; }
+    public List<string>? FilesChanged { get; init; }
+    public string? DurationSec { get; init; }
+}

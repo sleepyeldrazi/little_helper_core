@@ -191,6 +191,132 @@ public class ModelConfigTests
     }
 
     [Fact]
+    public void Resolve_AuthTypeFlowsThrough_Default()
+    {
+        var config = new ModelConfig
+        {
+            Providers = new Dictionary<string, ProviderConfig>
+            {
+                ["anthropic-prov"] = new()
+                {
+                    BaseUrl = "https://api.anthropic.com",
+                    ApiKey = "sk-ant-test",
+                    ApiType = "anthropic",
+                    Models = new List<ModelEntry>
+                    {
+                        new() { Id = "claude-3", ContextWindow = 200000 }
+                    }
+                }
+            }
+        };
+
+        var result = config.Resolve("claude-3");
+        Assert.NotNull(result);
+        Assert.Equal("x-api-key", result!.AuthType);
+    }
+
+    [Fact]
+    public void Resolve_AuthTypeFlowsThrough_Bearer()
+    {
+        var config = new ModelConfig
+        {
+            Providers = new Dictionary<string, ProviderConfig>
+            {
+                ["zai"] = new()
+                {
+                    BaseUrl = "https://api.example.com",
+                    ApiKey = "test-key",
+                    ApiType = "anthropic",
+                    AuthType = "bearer",
+                    Models = new List<ModelEntry>
+                    {
+                        new() { Id = "glm-5", ContextWindow = 131072 }
+                    }
+                }
+            }
+        };
+
+        var result = config.Resolve("glm-5");
+        Assert.NotNull(result);
+        Assert.Equal("bearer", result!.AuthType);
+    }
+
+    [Fact]
+    public void Resolve_ToolsEnabledFlowsThrough_Null()
+    {
+        var config = new ModelConfig
+        {
+            Providers = new Dictionary<string, ProviderConfig>
+            {
+                ["local"] = new()
+                {
+                    BaseUrl = "http://localhost:11434/v1",
+                    ApiType = "openai",
+                    Models = new List<ModelEntry>
+                    {
+                        new() { Id = "test-model", ContextWindow = 32768 }
+                    }
+                }
+            }
+        };
+
+        var result = config.Resolve("test-model");
+        Assert.NotNull(result);
+        Assert.Null(result!.ToolsEnabled);
+    }
+
+    [Fact]
+    public void Resolve_ToolsEnabledFlowsThrough_False()
+    {
+        var config = new ModelConfig
+        {
+            Providers = new Dictionary<string, ProviderConfig>
+            {
+                ["llamacpp"] = new()
+                {
+                    BaseUrl = "http://localhost:8080/v1",
+                    ApiType = "openai",
+                    ToolsEnabled = false,
+                    Models = new List<ModelEntry>
+                    {
+                        new() { Id = "gemma4:4b", ContextWindow = 8192 }
+                    }
+                }
+            }
+        };
+
+        var result = config.Resolve("gemma4:4b");
+        Assert.NotNull(result);
+        Assert.False(result!.ToolsEnabled);
+    }
+
+    [Fact]
+    public void Resolve_ToolsEnabledFlowsThrough_True()
+    {
+        var config = new ModelConfig
+        {
+            Providers = new Dictionary<string, ProviderConfig>
+            {
+                ["openrouter"] = new()
+                {
+                    BaseUrl = "https://openrouter.ai/api/v1",
+                    ApiKey = "test-key",
+                    ApiType = "openai",
+                    ToolsEnabled = true,
+                    Models = new List<ModelEntry>
+                    {
+                        new() { Id = "gpt-4", ContextWindow = 128000 }
+                    }
+                }
+            }
+        };
+
+        var result = config.Resolve("gpt-4");
+        Assert.NotNull(result);
+        Assert.True(result!.ToolsEnabled);
+    }
+
+    [Fact]
     public void Resolve_DefaultApiTypeIsOpenai()
     {
         var config = new ModelConfig

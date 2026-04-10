@@ -37,7 +37,8 @@ public class ModelConfig
                 {
                     return new ResolvedModel(
                         provider.BaseUrl, modelId, provider.ApiKey ?? "",
-                        model.ContextWindow, model.Temperature, provider.ApiType, provider.Headers);
+                        model.ContextWindow, model.Temperature, provider.ApiType, provider.Headers,
+                        provider.AuthType, provider.ToolsEnabled);
                 }
             }
 
@@ -47,7 +48,8 @@ public class ModelConfig
             {
                 return new ResolvedModel(
                     provider.BaseUrl, modelId, provider.ApiKey ?? "",
-                    provider.DefaultContextWindow, provider.DefaultTemperature, provider.ApiType, provider.Headers);
+                    provider.DefaultContextWindow, provider.DefaultTemperature, provider.ApiType, provider.Headers,
+                    provider.AuthType, provider.ToolsEnabled);
             }
 
             return null;
@@ -61,7 +63,8 @@ public class ModelConfig
             {
                 return new ResolvedModel(
                     provider.BaseUrl, model.Id, provider.ApiKey ?? "",
-                    model.ContextWindow, model.Temperature, provider.ApiType, provider.Headers);
+                    model.ContextWindow, model.Temperature, provider.ApiType, provider.Headers,
+                    provider.AuthType, provider.ToolsEnabled);
             }
         }
 
@@ -165,6 +168,21 @@ public class ProviderConfig
 
     /// <summary>API protocol: "openai" (default) or "anthropic".</summary>
     public string ApiType { get; set; } = "openai";
+
+    /// <summary>
+    /// Auth header style: "x-api-key" (default for Anthropic) or "bearer".
+    /// Only used when ApiType is "anthropic". OpenAI always uses Bearer.
+    /// </summary>
+    public string AuthType { get; set; } = "x-api-key";
+
+    /// <summary>
+    /// Whether to send tool schemas in API requests.
+    /// null = auto (enable, with fallback on 400 errors),
+    /// true = always send tool schemas,
+    /// false = never send tool schemas (describe tools in system prompt instead).
+    /// Set to false for llama.cpp endpoints that return "Unable to generate parser" GBNF errors.
+    /// </summary>
+    public bool? ToolsEnabled { get; set; }
 }
 
 /// <summary>A model entry within a provider.</summary>
@@ -176,6 +194,7 @@ public class ModelEntry
     public double Temperature { get; set; } = 0.3;
 }
 
-/// <summary>Resolved model ready for use: endpoint + model id + api key + settings + API type.</summary>
+/// <summary>Resolved model ready for use: endpoint + model id + api key + settings + API type + auth type.</summary>
 public record ResolvedModel(string BaseUrl, string ModelId, string ApiKey, int ContextWindow,
-    double Temperature, string ApiType = "openai", Dictionary<string, string>? Headers = null);
+    double Temperature, string ApiType = "openai", Dictionary<string, string>? Headers = null,
+    string AuthType = "x-api-key", bool? ToolsEnabled = null);

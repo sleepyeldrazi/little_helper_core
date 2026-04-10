@@ -28,7 +28,7 @@ internal static class ModelStreaming
             if (!response.IsSuccessStatusCode)
             {
                 var errorBody = await response.Content.ReadAsStringAsync(ct);
-                Console.Error.WriteLine($"Model API error ({response.StatusCode}): {errorBody}");
+                observer.OnError($"Model API error ({response.StatusCode}): {errorBody}");
                 return null;
             }
 
@@ -46,7 +46,7 @@ internal static class ModelStreaming
                 }
                 catch (Exception ex)
                 {
-                    Console.Error.WriteLine($"Failed to parse non-streaming response: {ex.Message}");
+                    observer.OnError($"Failed to parse non-streaming response: {ex.Message}");
                     return null;
                 }
             }
@@ -144,7 +144,7 @@ internal static class ModelStreaming
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Streaming request failed: {ex.Message}");
+            observer.OnError($"Streaming request failed: {ex.Message}");
             return null;
         }
     }
