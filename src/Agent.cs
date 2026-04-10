@@ -314,6 +314,8 @@ public class Agent
                 "write" => args.TryGetProperty("path", out var w) ? w.GetString() ?? "" : "",
                 "run" or "bash" => args.TryGetProperty("command", out var c) ? Truncate(c.GetString() ?? "", 80) : "",
                 "search" => args.TryGetProperty("pattern", out var s) ? $"\"{s.GetString()}\"" : "",
+                "spawn" => args.TryGetProperty("task", out var sp)
+                    ? Truncate(sp.GetString() ?? "", 60) : "",
                 _ => args.GetRawText()[..Math.Min(60, args.GetRawText().Length)]
             };
         }

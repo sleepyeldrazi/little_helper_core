@@ -18,9 +18,15 @@ public class ToolExecutor
     private readonly bool _blockDestructive;
 
     /// <summary>
-    /// Sub-agent spawn delegate. Set by the TUI to wire in tmux-based spawning.
+    /// Sub-agent spawn manager. Handles tmux session lifecycle and spawn logging.
+    /// When set, takes priority over SpawnHandler. Set by the TUI to enable sub-agents.
+    /// </summary>
+    public SpawnManager? SpawnManager { get; set; }
+
+    /// <summary>
+    /// Sub-agent spawn delegate. Legacy wiring for TUI-based spawning.
     /// Arguments: (task, type) -> result string.
-    /// When null, the spawn tool returns an error.
+    /// Used only when SpawnManager is null. When both are null, returns an error.
     /// </summary>
     public Func<string, string, Task<ToolResult>>? SpawnHandler { get; set; }
 
@@ -396,19 +402,25 @@ public class ToolExecutor
 
     /// <summary>
     /// Delegate a task to a sub-agent running in tmux.
-    /// Requires SpawnHandler to be set by the TUI. Returns an error if not configured.
+    /// Uses SpawnManager if available, otherwise falls back to SpawnHandler delegate.
+    /// Returns an error if neither is configured.
     /// </summary>
     private async Task<ToolResult> Spawn(JsonElement args)
     {
-        if (SpawnHandler == null)
-            return new ToolResult(
-                "Sub-agents not configured. Use :subagent to set up before using the spawn tool.",
-                IsError: true);
-
         var task = args.GetProperty("task").GetString()!;
         var type = args.TryGetProperty("type", out var t) ? t.GetString() ?? "small" : "small";
 
-        return await SpawnHandler(task, type);
+        // Prefer SpawnManager (core implementation) over SpawnHandler (legacy delegate)
+        if (SpawnManager != null)
+            return await SpawnManager.SpawnAsync(task, type);
+
+        // Fall back to SpawnHandler delegate (TUI-wired)
+        if (SpawnHandler != null)
+            return await SpawnHandler(task, type);
+
+        return new ToolResult(
+            "Sub-agents not configured. Spawn requires either SpawnManager or SpawnHandler to be set.",
+            IsError: true);
     }
 
     // --- Helpers ---

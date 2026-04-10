@@ -115,16 +115,21 @@ public static class ToolSchemas
     }
 
     /// <summary>Register the spawn tool schema. Called by TUI when sub-agents are enabled.</summary>
-    public static void RegisterSpawn(IModelClient client)
+    public static void RegisterSpawn(IModelClient client, bool small = false)
     {
         client.RegisterTool("spawn",
-            "Delegate a task to a sub-agent running in tmux. Returns a window name you can check with capture-pane.",
+            small
+                ? "Spawn a sub-agent in tmux. type='small' for quick tasks, 'complex' for multi-step."
+                : "Delegate a task to a sub-agent running in tmux. " +
+                  "Use type='small' for quick lookup, classification, or single-answer tasks — the agent returns a short exhaustive summary. " +
+                  "Use type='complex' for multi-step analysis or implementation — the agent plans a strategy, writes a TODO, executes, and reports results. " +
+                  "Returns a tmux window name you can interact with via send-keys and capture-pane.",
             NormalizeToolSchema("""
             {
                 "type": "object",
                 "properties": {
                     "task": { "type": "string", "description": "The task description for the sub-agent" },
-                    "type": { "type": "string", "description": "Agent tier: 'small' for quick lookup/classification, 'complex' for multi-step analysis", "enum": ["small", "complex"] }
+                    "type": { "type": "string", "description": "Agent tier: 'small' for quick lookup/classification (returns concise summary), 'complex' for multi-step analysis (plans, executes, reports)", "enum": ["small", "complex"] }
                 },
                 "required": ["task", "type"]
             }
