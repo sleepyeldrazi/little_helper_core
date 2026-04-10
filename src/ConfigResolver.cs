@@ -4,7 +4,7 @@ namespace LittleHelper;
 /// Resolves CLI arguments against model config from ~/.little_helper/models.json.
 /// Extracted from Program.cs to keep files under 300 lines (Rule #8).
 /// </summary>
-static class ConfigResolver
+public static class ConfigResolver
 {
     /// <summary>
     /// Resolve CLI args + config file into final values for endpoint, model, api key, etc.
@@ -65,7 +65,7 @@ static class ConfigResolver
 }
 
 /// <summary>Final resolved config values ready for AgentConfig construction.</summary>
-record ResolvedConfig(
+public record ResolvedConfig(
     string ModelId,
     string Endpoint,
     string? ApiKey,

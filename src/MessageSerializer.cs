@@ -6,7 +6,7 @@ namespace LittleHelper;
 /// Serializes ChatMessage lists to the OpenAI API JSON format.
 /// Extracted from ModelClient.cs to keep files under 300 lines (Rule #8).
 /// </summary>
-static class MessageSerializer
+public static class MessageSerializer
 {
     /// <summary>Convert a list of ChatMessages to the OpenAI messages array format.</summary>
     public static JsonElement ToArray(List<ChatMessage> messages)

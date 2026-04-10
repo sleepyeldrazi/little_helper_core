@@ -9,7 +9,7 @@ namespace LittleHelper;
 /// Each is a simple function: arguments -> ToolResult.
 /// All paths are resolved relative to the working directory — no path escape.
 /// </summary>
-class ToolExecutor
+public class ToolExecutor
 {
     private readonly string _workingDir;
     private readonly HashSet<string> _destructiveCommands;

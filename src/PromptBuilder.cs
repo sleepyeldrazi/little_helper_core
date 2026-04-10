@@ -9,7 +9,7 @@ namespace LittleHelper;
 /// Research: system prompt under 1000 tokens, documents-first query-last
 /// ordering, operating principles with rationales.
 /// </summary>
-class PromptBuilder
+public class PromptBuilder
 {
     private readonly AgentConfig _config;
     private readonly SkillDiscovery _skills;

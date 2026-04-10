@@ -7,7 +7,7 @@ namespace LittleHelper;
 /// Skill discovery and formatting. Not execution — skills are prompt injection.
 /// Scans SKILL.md files, parses frontmatter, formats the XML block for the system prompt.
 /// </summary>
-class SkillDiscovery
+public class SkillDiscovery
 {
     private readonly List<SkillDef> _skills = new();
 

@@ -9,7 +9,7 @@ namespace LittleHelper;
 /// Lines: session_start, step, tool_call, tool_result, session_end.
 /// Designed for later analysis, TUI replay, and debugging.
 /// </summary>
-class SessionLogger : IDisposable
+public class SessionLogger : IDisposable
 {
     private readonly StreamWriter _writer;
     private readonly string _logPath;

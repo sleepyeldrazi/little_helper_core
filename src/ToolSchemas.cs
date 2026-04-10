@@ -8,7 +8,7 @@ namespace LittleHelper;
 /// Each schema includes additionalProperties: false on all objects per research
 /// (constrained decoding removes syntactic failures).
 /// </summary>
-static class ToolSchemas
+public static class ToolSchemas
 {
     /// <summary>
     /// Register the 5 standard tool schemas with a ModelClient.

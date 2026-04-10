@@ -8,7 +8,7 @@ namespace LittleHelper;
 /// OpenAI-compatible HTTP client. The only I/O boundary to the LLM.
 /// Handles JSON repair, fuzzy tool matching, and retry logic.
 /// </summary>
-class ModelClient : IDisposable
+public class ModelClient : IDisposable
 {
     private readonly HttpClient _http;
     private readonly string _endpoint;
@@ -18,7 +18,7 @@ class ModelClient : IDisposable
     private int _totalTokensUsed;
     private bool _disposed;
 
-    record ToolDef(string Name, string Description, JsonElement ParametersSchema);
+    public record ToolDef(string Name, string Description, JsonElement ParametersSchema);
 
     /// <summary>Total tokens consumed across all calls in this session.</summary>
     public int TotalTokensUsed => _totalTokensUsed;
@@ -70,8 +70,10 @@ class ModelClient : IDisposable
     /// Send a chat completion request with tool definitions.
     /// Retries on malformed responses (up to maxRetries times).
     /// Retries append hints to the last user message (not system messages).
+    /// If observer is provided, streaming is enabled and chunks are forwarded via OnStreamChunk.
     /// </summary>
-    public async Task<ModelResponse> Complete(List<ChatMessage> messages, CancellationToken ct = default, int maxRetries = 3)
+    public async Task<ModelResponse> Complete(List<ChatMessage> messages, CancellationToken ct = default,
+        int maxRetries = 3, IAgentObserver? observer = null)
     {
         var toolSchemas = BuildToolSchemas();
 
@@ -79,7 +81,17 @@ class ModelClient : IDisposable
         {
             ct.ThrowIfCancellationRequested();
 
-            var response = await SendRequest(BuildRequestBody(messages, toolSchemas), ct);
+            var requestBody = BuildRequestBody(messages, toolSchemas, observer != null);
+            JsonElement? response;
+
+            if (observer != null)
+            {
+                response = await SendRequestStreaming(requestBody, observer, ct);
+            }
+            else
+            {
+                response = await SendRequest(requestBody, ct);
+            }
 
             if (response == null)
             {
@@ -109,7 +121,7 @@ class ModelClient : IDisposable
     }
 
     /// <summary>Build the OpenAI-compatible request body.</summary>
-    private string BuildRequestBody(List<ChatMessage> messages, JsonElement toolSchemas)
+    private string BuildRequestBody(List<ChatMessage> messages, JsonElement toolSchemas, bool streaming = false)
     {
         var body = new Dictionary<string, object>
         {
@@ -117,6 +129,8 @@ class ModelClient : IDisposable
             ["messages"] = MessageSerializer.ToArray(messages),
             ["temperature"] = _temperature,
         };
+        if (streaming)
+            body["stream"] = true;
         if (_tools.Count > 0)
             body["tools"] = toolSchemas;
 
@@ -173,6 +187,184 @@ class ModelClient : IDisposable
             Console.Error.WriteLine($"Model request failed: {ex.Message}");
             return null;
         }
+    }
+
+    /// <summary>
+    /// Send a streaming SSE request. Accumulates chunks into a complete response
+    /// while forwarding content/thinking deltas to the observer.
+    /// Falls back to non-streaming if SSE parsing fails.
+    /// </summary>
+    private async Task<JsonElement?> SendRequestStreaming(string requestBody, IAgentObserver observer, CancellationToken ct)
+    {
+        try
+        {
+            var content = new StringContent(requestBody, Encoding.UTF8, "application/json");
+            var request = new HttpRequestMessage(HttpMethod.Post, $"{_endpoint}/chat/completions") { Content = content };
+
+            using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorBody = await response.Content.ReadAsStringAsync(ct);
+                Console.Error.WriteLine($"Model API error ({response.StatusCode}): {errorBody}");
+                return null;
+            }
+
+            // Read SSE stream and accumulate response
+            var fullContent = new StringBuilder();
+            var fullThinking = new StringBuilder();
+            var toolCallArgs = new Dictionary<int, StringBuilder>(); // index -> args
+            var toolCallNames = new Dictionary<int, string>(); // index -> name
+            var toolCallIds = new Dictionary<int, string>(); // index -> id
+            int totalTokens = 0;
+
+            using var stream = await response.Content.ReadAsStreamAsync(ct);
+            using var reader = new StreamReader(stream);
+
+            string? line;
+            while ((line = await reader.ReadLineAsync(ct)) != null)
+            {
+                if (string.IsNullOrWhiteSpace(line) || !line.StartsWith("data: ")) continue;
+                var data = line["data: ".Length..].Trim();
+                if (data == "[DONE]") break;
+
+                JsonDocument doc;
+                try { doc = JsonDocument.Parse(data); }
+                catch { continue; }
+
+                using (doc)
+                {
+                    var root = doc.RootElement;
+
+                    // Extract content delta
+                    if (root.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0)
+                    {
+                        var delta = choices[0].GetProperty("delta");
+
+                        // Content delta
+                        if (delta.TryGetProperty("content", out var c) && c.ValueKind != JsonValueKind.Null)
+                        {
+                            var chunk = c.GetString() ?? "";
+                            fullContent.Append(chunk);
+                            observer.OnStreamChunk(chunk, null);
+                        }
+
+                        // Thinking/reasoning delta (Kimi K2.5 / DeepSeek)
+                        if (delta.TryGetProperty("reasoning_content", out var rc) && rc.ValueKind != JsonValueKind.Null)
+                        {
+                            var chunk = rc.GetString() ?? "";
+                            fullThinking.Append(chunk);
+                            observer.OnStreamChunk("", chunk);
+                        }
+                        // Ollama thinking delta
+                        else if (delta.TryGetProperty("thinking", out var tk) && tk.ValueKind != JsonValueKind.Null)
+                        {
+                            var chunk = tk.GetString() ?? "";
+                            fullThinking.Append(chunk);
+                            observer.OnStreamChunk("", chunk);
+                        }
+
+                        // Tool call deltas (streaming)
+                        if (delta.TryGetProperty("tool_calls", out var tcDelta) && tcDelta.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var tc in tcDelta.EnumerateArray())
+                            {
+                                var idx = tc.TryGetProperty("index", out var idxEl) ? idxEl.GetInt32() : 0;
+                                if (!toolCallArgs.ContainsKey(idx))
+                                {
+                                    toolCallArgs[idx] = new StringBuilder();
+                                    toolCallNames[idx] = "";
+                                    toolCallIds[idx] = "";
+                                }
+                                if (tc.TryGetProperty("id", out var id) && id.ValueKind != JsonValueKind.Null)
+                                    toolCallIds[idx] = id.GetString() ?? "";
+                                if (tc.TryGetProperty("function", out var func))
+                                {
+                                    if (func.TryGetProperty("name", out var name) && name.ValueKind != JsonValueKind.Null)
+                                        toolCallNames[idx] = name.GetString() ?? "";
+                                    if (func.TryGetProperty("arguments", out var args) && args.ValueKind != JsonValueKind.Null)
+                                        toolCallArgs[idx].Append(args.GetString() ?? "");
+                                }
+                            }
+                        }
+                    }
+
+                    // Usage from streaming (some providers send it in the last chunk)
+                    if (root.TryGetProperty("usage", out var usage))
+                    {
+                        if (usage.TryGetProperty("total_tokens", out var total))
+                            totalTokens = total.GetInt32();
+                    }
+                }
+            }
+
+            // Reconstruct a non-streaming JSON response for ParseResponse
+            var reconstructed = BuildReconstructedResponse(fullContent.ToString(), fullThinking.ToString(),
+                toolCallIds, toolCallNames, toolCallArgs, totalTokens);
+            return reconstructed;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Streaming request failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>Build a synthetic non-streaming response from accumulated stream data.</summary>
+    private JsonElement BuildReconstructedResponse(string content, string thinking,
+        Dictionary<int, string> toolCallIds, Dictionary<int, string> toolCallNames,
+        Dictionary<int, StringBuilder> toolCallArgs, int totalTokens)
+    {
+        var toolCallsList = new List<Dictionary<string, object>>();
+        foreach (var idx in toolCallArgs.Keys.OrderBy(k => k))
+        {
+            var func = new Dictionary<string, object>
+            {
+                ["name"] = ResolveToolName(toolCallNames.GetValueOrDefault(idx, "")),
+                ["arguments"] = toolCallArgs[idx].ToString()
+            };
+            var tc = new Dictionary<string, object>
+            {
+                ["id"] = toolCallIds.GetValueOrDefault(idx, Guid.NewGuid().ToString()),
+                ["type"] = "function",
+                ["function"] = func
+            };
+            toolCallsList.Add(tc);
+        }
+
+        var message = new Dictionary<string, object?>
+        {
+            ["role"] = "assistant",
+            ["content"] = content
+        };
+        if (!string.IsNullOrEmpty(thinking))
+            message["reasoning_content"] = thinking;
+        if (toolCallsList.Count > 0)
+            message["tool_calls"] = toolCallsList;
+
+        var response = new Dictionary<string, object?>
+        {
+            ["choices"] = new[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["message"] = message,
+                    ["finish_reason"] = "stop",
+                    ["index"] = 0
+                }
+            },
+            ["usage"] = new Dictionary<string, object?>
+            {
+                ["total_tokens"] = totalTokens
+            }
+        };
+
+        var json = JsonSerializer.Serialize(response, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+        });
+        return JsonDocument.Parse(json).RootElement.Clone();
     }
 
     /// <summary>Parse the API response into a ModelResponse.</summary>

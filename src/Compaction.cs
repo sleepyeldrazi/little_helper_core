@@ -7,7 +7,7 @@ namespace LittleHelper;
 /// Research: JetBrains observation masking beats LLM summarization (2.6% higher solve, 52% cheaper).
 /// Strategy: Replace old tool outputs with placeholders, keep reasoning intact.
 /// </summary>
-class Compaction
+public class Compaction
 {
     private readonly AgentConfig _config;
 
@@ -268,7 +268,7 @@ class Compaction
 /// <summary>
 /// Extension methods for compaction integration with Agent.
 /// </summary>
-static class CompactionExtensions
+public static class CompactionExtensions
 {
     /// <summary>
     /// Compact messages if needed, logging the result.

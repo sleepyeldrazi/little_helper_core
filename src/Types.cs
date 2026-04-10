@@ -7,7 +7,7 @@ namespace LittleHelper;
 /// <summary>
 /// Agent FSM states. StateFlow research: explicit FSM yields 63.73% success vs 40.3% for ReAct.
 /// </summary>
-enum AgentState
+public enum AgentState
 {
     Planning,
     Executing,
@@ -21,18 +21,18 @@ enum AgentState
 /// <summary>
 /// A parsed tool call from the model's response.
 /// </summary>
-record ToolCall(string Id, string Name, JsonElement Arguments);
+public record ToolCall(string Id, string Name, JsonElement Arguments);
 
 /// <summary>
 /// Result from executing a single tool.
 /// </summary>
-record ToolResult(string Output, bool IsError, string? FilePath = null);
+public record ToolResult(string Output, bool IsError, string? FilePath = null);
 
 /// <summary>
 /// Final result from an agent run.
 /// ThinkingLog accumulates all model reasoning across steps for TUI display.
 /// </summary>
-record AgentResult(bool Success, string Output, List<string> FilesChanged,
+public record AgentResult(bool Success, string Output, List<string> FilesChanged,
     List<string> ThinkingLog = null!, int TotalThinkingTokens = 0)
 {
     public List<string> ThinkingLog { get; init; } = ThinkingLog ?? new List<string>();
@@ -43,18 +43,18 @@ record AgentResult(bool Success, string Output, List<string> FilesChanged,
 /// ThinkingContent captures chain-of-thought from thinking models (Kimi K2.5, DeepSeek, etc.)
 /// that return a "reasoning_content" or "thinking" field alongside the main content.
 /// </summary>
-record ModelResponse(string Content, List<ToolCall> ToolCalls, int TokensUsed,
+public record ModelResponse(string Content, List<ToolCall> ToolCalls, int TokensUsed,
     string? ThinkingContent = null, int ThinkingTokens = 0);
 
 /// <summary>
 /// Result of context compaction.
 /// </summary>
-record CompactionResult(List<ChatMessage> Messages, int TokensSaved);
+public record CompactionResult(List<ChatMessage> Messages, int TokensSaved);
 
 /// <summary>
 /// A discovered skill definition (from SKILL.md frontmatter).
 /// </summary>
-record SkillDef(string Name, string Description, string FilePath);
+public record SkillDef(string Name, string Description, string FilePath);
 
 // --- Chat Message Types ---
 
@@ -63,7 +63,7 @@ record SkillDef(string Name, string Description, string FilePath);
 /// Assistant messages may carry ReasoningContent from thinking models (Kimi K2.5, DeepSeek).
 /// This MUST be serialized back as reasoning_content, or thinking-mode APIs reject the request.
 /// </summary>
-record ChatMessage
+public record ChatMessage
 {
     public string Role { get; init; }
     public string? Content { get; init; }
@@ -107,7 +107,7 @@ record ChatMessage
 /// <summary>
 /// Agent configuration. Immutable — create new instances with `with` expressions.
 /// </summary>
-record AgentConfig(
+public record AgentConfig(
     string ModelEndpoint,      // e.g. "http://localhost:11434/v1"
     string ModelName,          // e.g. "qwen3:14b"
     int MaxContextTokens,      // e.g. 32768

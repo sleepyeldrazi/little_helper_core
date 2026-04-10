@@ -8,7 +8,7 @@ namespace LittleHelper;
 /// Follows the pi/agent/models.json format: providers with baseUrl,
 /// optional apiKey, and a list of models with id + contextWindow.
 /// </summary>
-class ModelConfig
+public class ModelConfig
 {
     /// <summary>Map of provider name -> provider config.</summary>
     public Dictionary<string, ProviderConfig> Providers { get; set; } = new();
@@ -148,7 +148,7 @@ class ModelConfig
 }
 
 /// <summary>A provider (an API endpoint serving models).</summary>
-class ProviderConfig
+public class ProviderConfig
 {
     public string BaseUrl { get; set; } = "";
     public string? ApiKey { get; set; }
@@ -192,7 +192,7 @@ class ProviderConfig
 }
 
 /// <summary>A model entry within a provider.</summary>
-class ModelEntry
+public class ModelEntry
 {
     public string Id { get; set; } = "";
     public string? Name { get; set; }
@@ -201,4 +201,4 @@ class ModelEntry
 }
 
 /// <summary>Resolved model ready for use: endpoint + model id + api key + settings + API type.</summary>
-record ResolvedModel(string BaseUrl, string ModelId, string ApiKey, int ContextWindow, double Temperature, string ApiType = "openai");
+public record ResolvedModel(string BaseUrl, string ModelId, string ApiKey, int ContextWindow, double Temperature, string ApiType = "openai");

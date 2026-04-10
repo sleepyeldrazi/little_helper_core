@@ -7,7 +7,7 @@ namespace LittleHelper;
 /// Shell command execution helpers. Extracted from Tools.cs to keep files under 300 lines (Rule #8).
 /// Uses stdin pipe for Run/Bash commands (avoids shell injection), bash -c for Search.
 /// </summary>
-static class ShellExecutor
+public static class ShellExecutor
 {
     /// <summary>
     /// Execute a command by piping it to bash via stdin.
@@ -110,4 +110,4 @@ static class ShellExecutor
 }
 
 /// <summary>Result of a shell command execution.</summary>
-record ShellResult(string Output, int ExitCode, bool TimedOut, string? Stderr = null);
+public record ShellResult(string Output, int ExitCode, bool TimedOut, string? Stderr = null);

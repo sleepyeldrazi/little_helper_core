@@ -6,7 +6,7 @@ namespace LittleHelper;
 /// JSON repair utilities for handling malformed LLM output.
 /// Extracted from ModelClient.cs to keep files under 300 lines (Rule #8).
 /// </summary>
-static class JsonRepair
+public static class JsonRepair
 {
     /// <summary>
     /// Repair potentially malformed JSON. Strategy:

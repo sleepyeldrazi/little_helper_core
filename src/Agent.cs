@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Collections.Concurrent;
 
 namespace LittleHelper;
 
@@ -6,7 +7,7 @@ namespace LittleHelper;
 /// Core agent FSM loop. Single state machine: call model -> execute tools -> observe -> done.
 /// Research-backed: explicit FSM (63.73% vs 40.3% for ReAct), minimal system prompt, stall detection.
 /// </summary>
-class Agent
+public class Agent
 {
     private readonly AgentConfig _config;
     private readonly ModelClient _modelClient;
@@ -15,14 +16,30 @@ class Agent
     private readonly Compaction _compactor;
     private readonly PromptBuilder _promptBuilder;
     private readonly SessionLogger? _logger;
+    private readonly IAgentObserver? _observer;
     private List<string> _filesChanged;
 
     // Stall detection: circular buffer of recent observations
     private string?[] _recentObservations;
     private int _observationIndex;
 
+    // Pause/resume: checked between FSM steps
+    private readonly ManualResetEventSlim _pauseGate = new(true);
+
+    // Message injection: thread-safe queue drained between steps
+    private readonly ConcurrentQueue<string> _injectedMessages = new();
+
+    // Conversation history: accessible for TUI (read-only from outside)
+    private List<ChatMessage> _messages = new();
+
+    /// <summary>Read-only access to conversation history for TUI.</summary>
+    public IReadOnlyList<ChatMessage> History => _messages.AsReadOnly();
+
+    /// <summary>Whether the agent is currently paused between steps.</summary>
+    public bool IsPaused => !_pauseGate.IsSet;
+
     public Agent(AgentConfig config, ModelClient modelClient, ToolExecutor toolExecutor,
-        SkillDiscovery skills, SessionLogger? logger = null)
+        SkillDiscovery skills, SessionLogger? logger = null, IAgentObserver? observer = null)
     {
         _config = config;
         _modelClient = modelClient;
@@ -31,10 +48,26 @@ class Agent
         _compactor = new Compaction(config);
         _promptBuilder = new PromptBuilder(config, skills);
         _logger = logger;
+        _observer = observer;
         _filesChanged = new List<string>();
         _recentObservations = new string?[config.StallThreshold];
         _observationIndex = 0;
     }
+
+    /// <summary>Pause the agent. It will stop at the next step boundary.</summary>
+    public void Pause() => _pauseGate.Reset();
+
+    /// <summary>Resume the agent after a pause.</summary>
+    public void Resume() => _pauseGate.Set();
+
+    /// <summary>Inject a user message to be processed at the next step boundary.</summary>
+    public void InjectMessage(string message) => _injectedMessages.Enqueue(message);
+
+    /// <summary>
+    /// Set a tool call interceptor. Called before each tool execution.
+    /// Return null to skip the call, return a modified ToolCall to edit arguments.
+    /// </summary>
+    public Func<ToolCall, ToolCall?>? ToolInterceptor { get; set; }
 
     /// <summary>
     /// Run the agent loop until done or step limit reached.
@@ -42,7 +75,7 @@ class Agent
     public async Task<AgentResult> RunAsync(string userPrompt, CancellationToken ct = default)
     {
         var state = AgentState.Planning;
-        var messages = new List<ChatMessage>();
+        _messages = new List<ChatMessage>();
         int step = 0;
         int errorRecoveryCount = 0;
         string finalOutput = "";
@@ -56,38 +89,57 @@ class Agent
         {
             ct.ThrowIfCancellationRequested();
 
+            // Pause checkpoint: block here if paused, wake on Resume()
+            _pauseGate.Wait(ct);
+
+            // Drain any injected messages
+            while (_injectedMessages.TryDequeue(out var injected))
+            {
+                _messages.Add(ChatMessage.User(injected));
+                _observer?.OnError($"[Injected] {injected[..Math.Min(80, injected.Length)]}");
+            }
+
             switch (state)
             {
                 case AgentState.Planning:
                     Log("[State] Planning — building initial context");
-                    messages = _promptBuilder.BuildInitialContext(userPrompt);
+                    _messages = _promptBuilder.BuildInitialContext(userPrompt);
+                    var fromPlanning = state;
                     state = AgentState.Executing;
+                    _observer?.OnStateChange(fromPlanning, state);
                     break;
 
                 case AgentState.Executing:
                     // Compact context if approaching token limit
-                    if (_compactor.NeedsCompaction(messages))
+                    if (_compactor.NeedsCompaction(_messages))
                     {
-                        var compacted = _compactor.CompactIfNeeded(messages);
-                        messages = compacted.Messages;
+                        var compacted = _compactor.CompactIfNeeded(_messages);
+                        _messages = compacted.Messages;
+                        _observer?.OnCompaction(compacted);
                     }
 
-                    var response = await _modelClient.Complete(messages, ct);
+                    _observer?.OnStepStart(step + 1);
+                    var response = await _modelClient.Complete(_messages, ct, observer: _observer);
                     step++;
                     Log($"[Step {step}] Model responded ({response.TokensUsed} tokens, {response.ToolCalls.Count} tool calls)");
                     _logger?.Step(step, response.TokensUsed, response.ThinkingTokens,
                         response.ToolCalls.Count, response.ThinkingContent, response.Content);
 
-                    messages.Add(ChatMessage.Assistant(response.Content, response.ToolCalls, response.ThinkingContent));
+                    _observer?.OnModelResponse(response, step);
+                    _messages.Add(ChatMessage.Assistant(response.Content, response.ToolCalls, response.ThinkingContent));
 
                     if (response.ToolCalls.Count == 0)
                     {
                         finalOutput = response.Content;
+                        var fromExecuting = state;
                         state = AgentState.Done;
+                        _observer?.OnStateChange(fromExecuting, state);
                     }
                     else
                     {
+                        var fromExecuting2 = state;
                         state = AgentState.Observing;
+                        _observer?.OnStateChange(fromExecuting2, state);
                     }
                     break;
 
@@ -95,20 +147,32 @@ class Agent
                     Log("[State] Observing — executing tool calls");
                     bool hadError = false;
 
-                    // Get the assistant message with tool calls (guard against null)
-                    var lastAssistant = messages.LastOrDefault(m => m.Role == "assistant" && m.ToolCalls?.Count > 0);
+                    // Get the assistant message with tool calls
+                    var lastAssistant = _messages.LastOrDefault(m => m.Role == "assistant" && m.ToolCalls?.Count > 0);
                     var toolCalls = lastAssistant?.ToolCalls ?? new List<ToolCall>();
 
                     foreach (var toolCall in toolCalls)
                     {
-                        var detail = FormatToolDetail(toolCall.Name, toolCall.Arguments);
-                        Log($"  {toolCall.Name} {detail}");
-                        var sw = System.Diagnostics.Stopwatch.StartNew();
-                        var result = await _toolExecutor.Execute(toolCall.Name, toolCall.Arguments);
-                        sw.Stop();
-                        messages.Add(ChatMessage.FromToolResult(toolCall.Id, result));
+                        // Tool interception: allow TUI to skip/edit calls
+                        var intercepted = _observer?.OnToolCallExecuting(toolCall, step) ?? toolCall;
+                        if (intercepted == null)
+                        {
+                            Log($"  {toolCall.Name} SKIPPED (intercepted)");
+                            // Still need to send a tool result so the model doesn't hang
+                            var skipResult = new ToolResult("Tool call skipped by user.", true);
+                            _messages.Add(ChatMessage.FromToolResult(toolCall.Id, skipResult));
+                            continue;
+                        }
 
-                        _logger?.ToolCall(toolCall.Name, detail,
+                        var detail = FormatToolDetail(intercepted.Name, intercepted.Arguments);
+                        Log($"  {intercepted.Name} {detail}");
+                        var sw = System.Diagnostics.Stopwatch.StartNew();
+                        var result = await _toolExecutor.Execute(intercepted.Name, intercepted.Arguments);
+                        sw.Stop();
+                        _messages.Add(ChatMessage.FromToolResult(intercepted.Id, result));
+
+                        _observer?.OnToolCallCompleted(intercepted, result, sw.ElapsedMilliseconds, step);
+                        _logger?.ToolCall(intercepted.Name, detail,
                             result.Output, result.IsError, result.FilePath, sw.ElapsedMilliseconds);
 
                         if (result.IsError)
@@ -130,12 +194,14 @@ class Agent
                     }
 
                     // Stall detection
-                    var lastObservation = FormatLastObservation(messages);
+                    var lastObservation = FormatLastObservation(_messages);
                     if (IsStalled(lastObservation))
                     {
                         Log("[State] Stall detected — stopping");
                         finalOutput = "Stall detected: repeated observations. Stopping.";
+                        var fromObserving = state;
                         state = AgentState.Done;
+                        _observer?.OnStateChange(fromObserving, state);
                         break;
                     }
 
@@ -145,27 +211,32 @@ class Agent
                         {
                             errorRecoveryCount++;
                             Log($"[State] Error recovery (attempt {errorRecoveryCount}/{_config.MaxRetries})");
+                            var fromObserving2 = state;
                             state = AgentState.ErrorRecovery;
+                            _observer?.OnStateChange(fromObserving2, state);
                         }
                         else
                         {
                             Log($"[State] Max error recovery attempts reached ({errorRecoveryCount}/{_config.MaxRetries}), forcing done");
                             finalOutput = "Max error recovery attempts reached. Stopping.";
+                            var fromObserving3 = state;
                             state = AgentState.Done;
+                            _observer?.OnStateChange(fromObserving3, state);
                         }
                     }
                     else
                     {
                         // Successful observation resets the error recovery counter
                         errorRecoveryCount = 0;
+                        var fromObserving4 = state;
                         state = AgentState.Executing;
+                        _observer?.OnStateChange(fromObserving4, state);
                     }
                     break;
 
                 case AgentState.ErrorRecovery:
-                    // Inject error context as a system message (not a user message)
-                    // so the model treats it as instruction rather than conversation
-                    var recentErrors = messages
+                    // Inject error context as a system message
+                    var recentErrors = _messages
                         .Where(m => m.Role == "tool" && m.ToolResult?.IsError == true)
                         .TakeLast(1)
                         .Select(m => m.Content)
@@ -173,8 +244,10 @@ class Agent
                     var errorHint = string.IsNullOrEmpty(recentErrors)
                         ? "The previous tool call failed. Consider an alternative approach."
                         : $"The previous tool call failed: {recentErrors[..Math.Min(300, recentErrors.Length)]}\nConsider an alternative approach or fix the error before retrying.";
-                    messages.Add(ChatMessage.System(errorHint));
+                    _messages.Add(ChatMessage.System(errorHint));
+                    var fromRecovery = state;
                     state = AgentState.Executing;
+                    _observer?.OnStateChange(fromRecovery, state);
                     break;
             }
         }

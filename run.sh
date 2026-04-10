@@ -9,4 +9,4 @@
 set -e
 export PATH="$HOME/.dotnet:$PATH"
 cd "$(dirname "$0")"
-dotnet run --project src -- "$@"
+dotnet run --project cli -- "$@"
