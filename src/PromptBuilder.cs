@@ -185,6 +185,34 @@ public class PromptBuilder
                     sb.AppendLine(readme);
                 }
             }
+
+            // Project instructions: AGENTS.md, CLAUDE.md, .cursorrules
+            // These provide project-specific rules that override general principles.
+            if (!IsTinyModel)
+            {
+                var instructionFiles = new[]
+                {
+                    ("AGENTS.md", "Project instructions (AGENTS.md)"),
+                    ("CLAUDE.md", "Project instructions (CLAUDE.md)"),
+                    (".cursorrules", "Project instructions (.cursorrules)")
+                };
+
+                foreach (var (fileName, label) in instructionFiles)
+                {
+                    var filePath = Path.Combine(_config.WorkingDirectory, fileName);
+                    if (File.Exists(filePath))
+                    {
+                        var content = File.ReadAllText(filePath);
+                        var maxChars = IsSmallModel ? 1500 : 4000;
+                        if (content.Length > maxChars)
+                            content = content[..maxChars] + "\n... (truncated)";
+                        sb.AppendLine();
+                        sb.AppendLine($"{label}:");
+                        sb.AppendLine(content);
+                        break; // Only inject the first one found
+                    }
+                }
+            }
         }
         catch (Exception ex)
         {

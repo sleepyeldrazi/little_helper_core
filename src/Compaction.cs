@@ -160,6 +160,8 @@ public class Compaction
 
     /// <summary>
     /// Replace tool output with a placeholder describing what was called.
+    /// Code-aware: preserves function signatures, class definitions, imports,
+    /// and type definitions. Only masks function bodies and verbose output.
     /// </summary>
     private ChatMessage CompressToolResult(ChatMessage msg)
     {
@@ -169,6 +171,20 @@ public class Compaction
         var filePath = msg.ToolResult.FilePath;
         var lineCount = msg.Content.Split('\n').Length;
 
+        // Try code-aware compression for file reads (tool results with FilePath)
+        if (!string.IsNullOrEmpty(filePath) && CodeCompressor.IsCodeFile(filePath))
+        {
+            var compressed = CodeCompressor.Compress(msg.Content);
+            if (compressed != null)
+            {
+                return ChatMessage.FromToolResult(msg.ToolCallId ?? "", new ToolResult(
+                    Output: compressed,
+                    IsError: msg.ToolResult.IsError,
+                    FilePath: filePath));
+            }
+        }
+
+        // Fallback: generic placeholder
         string placeholder;
         if (!string.IsNullOrEmpty(filePath))
         {

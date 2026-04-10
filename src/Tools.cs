@@ -35,6 +35,11 @@ public class ToolExecutor
     /// <summary>Dispatch a tool call by name. Returns the tool result.</summary>
     public async Task<ToolResult> Execute(string toolName, JsonElement arguments)
     {
+        // Validation guard: catch malformed args before execution
+        var validationError = Validate(toolName, arguments);
+        if (validationError != null)
+            return new ToolResult(validationError, IsError: true);
+
         return toolName.ToLowerInvariant() switch
         {
             "read" => await Read(arguments),
@@ -44,6 +49,71 @@ public class ToolExecutor
             "bash" => await Run(arguments),  // bash is alias for run
             _ => new ToolResult($"Unknown tool: {toolName}", IsError: true)
         };
+    }
+
+    /// <summary>
+    /// Validate tool call arguments before execution.
+    /// Catches: missing required fields, wrong types, nonexistent paths for read.
+    /// Returns null if valid, error message if invalid.
+    /// </summary>
+    private string? Validate(string toolName, JsonElement args)
+    {
+        var name = toolName.ToLowerInvariant();
+
+        // Check required fields per tool
+        return name switch
+        {
+            "read" => ValidateRead(args),
+            "write" => ValidateWrite(args),
+            "run" or "bash" => ValidateRun(args),
+            "search" => ValidateSearch(args),
+            _ => null // Unknown tools are caught by Execute
+        };
+    }
+
+    private static string? ValidateRead(JsonElement args)
+    {
+        if (!args.TryGetProperty("path", out var pathProp))
+            return "Missing required argument 'path' for read tool.";
+        if (pathProp.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(pathProp.GetString()))
+            return "Argument 'path' must be a non-empty string.";
+        // Don't check file existence here — Read() already handles that with a clear message
+        if (args.TryGetProperty("offset", out var offset) && offset.ValueKind != JsonValueKind.Number)
+            return "Argument 'offset' must be a number.";
+        if (args.TryGetProperty("limit", out var limit) && limit.ValueKind != JsonValueKind.Number)
+            return "Argument 'limit' must be a number.";
+        return null;
+    }
+
+    private static string? ValidateWrite(JsonElement args)
+    {
+        if (!args.TryGetProperty("path", out var pathProp))
+            return "Missing required argument 'path' for write tool.";
+        if (pathProp.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(pathProp.GetString()))
+            return "Argument 'path' must be a non-empty string.";
+        if (!args.TryGetProperty("content", out _))
+            return "Missing required argument 'content' for write tool.";
+        return null;
+    }
+
+    private static string? ValidateRun(JsonElement args)
+    {
+        if (!args.TryGetProperty("command", out var cmdProp))
+            return "Missing required argument 'command' for run tool.";
+        if (cmdProp.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(cmdProp.GetString()))
+            return "Argument 'command' must be a non-empty string.";
+        if (args.TryGetProperty("timeout", out var timeout) && timeout.ValueKind != JsonValueKind.Number)
+            return "Argument 'timeout' must be a number.";
+        return null;
+    }
+
+    private static string? ValidateSearch(JsonElement args)
+    {
+        if (!args.TryGetProperty("pattern", out var patProp))
+            return "Missing required argument 'pattern' for search tool.";
+        if (patProp.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(patProp.GetString()))
+            return "Argument 'pattern' must be a non-empty string.";
+        return null;
     }
 
     /// <summary>Read file contents. Honors offset/limit. Never truncates (Rule #6).</summary>
@@ -72,8 +142,13 @@ public class ToolExecutor
             for (int i = startLine; i < endLine; i++)
                 output.AppendLine($"{i + 1,6}|{lines[i]}");
 
-            if (startLine > 0 || endLine < lines.Length)
-                output.AppendLine($"Showing lines {startLine + 1}-{endLine} of {lines.Length}");
+            // Truncation awareness: tell the model exactly what's missing
+            if (startLine > 0 && endLine < lines.Length)
+                output.AppendLine($"[Showing lines {startLine + 1}-{endLine} of {lines.Length}. Lines 1-{startLine} are above, lines {endLine + 1}-{lines.Length} are below. Use read with offset/limit to see more.]");
+            else if (startLine > 0)
+                output.AppendLine($"[Showing lines {startLine + 1}-{endLine} of {lines.Length}. Lines 1-{startLine} are above. Use read with offset=1 to see from the start.]");
+            else if (endLine < lines.Length)
+                output.AppendLine($"[Showing lines {startLine + 1}-{endLine} of {lines.Length}. Lines {endLine + 1}-{lines.Length} are below. Use read with offset={endLine + 1} to see the rest.]");
 
             return Task.FromResult(new ToolResult(output.ToString(), IsError: false, FilePath: path));
         }
