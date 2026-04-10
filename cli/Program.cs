@@ -255,7 +255,29 @@ class Program
             skills.Discover(config.WorkingDirectory, ResolveBundledSkillsDir());
 
             using IModelClient modelClient = CreateModelClient(resolved);
-            ToolSchemas.RegisterAll(modelClient);
+
+            // Auto-query context window from endpoint (overrides config if found)
+            var contextWindow = resolved.ContextWindow;
+            var queried = await modelClient.QueryContextWindow();
+            if (queried.HasValue && queried.Value > 0)
+            {
+                if (queried.Value != contextWindow)
+                {
+                    Console.WriteLine($"Context window: {contextWindow} -> {queried.Value} (auto-detected)");
+                    contextWindow = queried.Value;
+                    config = config with { MaxContextTokens = contextWindow };
+                }
+                else
+                {
+                    Console.WriteLine($"Context window: {contextWindow}");
+                }
+            }
+            else
+            {
+                Console.WriteLine($"Context window: {contextWindow} (from config)");
+            }
+
+            ToolSchemas.RegisterAll(modelClient, contextWindow);
 
             var toolExecutor = new ToolExecutor(config.WorkingDirectory, blockDestructive);
             using var logger = new SessionLogger(config.ModelName, config.WorkingDirectory);

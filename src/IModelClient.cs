@@ -21,4 +21,11 @@ public interface IModelClient : IDisposable
 
     /// <summary>Register a tool that the model can call.</summary>
     void RegisterTool(string name, string description, System.Text.Json.JsonElement parametersSchema);
+
+    /// <summary>
+    /// Query the endpoint for the model's context window size.
+    /// Returns null if the endpoint doesn't support this query.
+    /// Used for auto-detecting context window instead of relying on config alone.
+    /// </summary>
+    Task<int?> QueryContextWindow(CancellationToken ct = default);
 }

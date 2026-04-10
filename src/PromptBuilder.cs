@@ -8,11 +8,22 @@ namespace LittleHelper;
 ///
 /// Research: system prompt under 1000 tokens, documents-first query-last
 /// ordering, operating principles with rationales.
+///
+/// Dynamic compression: adjusts prompt verbosity based on context window size.
+/// Small context (&lt;16K) = small model = stripped prompt.
+/// Large context (&gt;=32K) = full prompt with README and batch scripting hint.
 /// </summary>
 public class PromptBuilder
 {
     private readonly AgentConfig _config;
     private readonly SkillDiscovery _skills;
+
+    // Context window tiers for prompt compression
+    private const int SmallModelThreshold = 16384;  // < 16K: stripped prompt
+    private const int TinyModelThreshold = 8192;    // < 8K: minimal prompt
+
+    private bool IsSmallModel => _config.MaxContextTokens < SmallModelThreshold;
+    private bool IsTinyModel => _config.MaxContextTokens < TinyModelThreshold;
 
     public PromptBuilder(AgentConfig config, SkillDiscovery skills)
     {
@@ -46,7 +57,8 @@ public class PromptBuilder
     }
 
     /// <summary>
-    /// Build minimal system prompt. Research: under 1000 tokens, principles over personas.
+    /// Build system prompt. Adjusts verbosity based on context window size.
+    /// Research: under 1000 tokens, principles over personas.
     /// </summary>
     private string BuildSystemPrompt()
     {
@@ -56,28 +68,49 @@ public class PromptBuilder
         sb.AppendLine("You are a helpful assistant that completes tasks by reading files, running commands, and writing code.");
         sb.AppendLine();
 
-        // Operating principles (numbered, with rationales)
+        // Operating principles — abbreviated for small models
         sb.AppendLine("Operating principles:");
-        sb.AppendLine("1. Think before acting. Read existing files before writing code because understanding prevents errors.");
-        sb.AppendLine("2. Be concise in output but thorough in reasoning because efficiency matters.");
-        sb.AppendLine("3. Prefer editing over rewriting whole files because precision preserves intent.");
-        sb.AppendLine("4. Do not re-read files you have already read unless the file may have changed because redundancy wastes steps.");
-        sb.AppendLine("5. Test your code before declaring done because verification catches bugs.");
-        sb.AppendLine("6. Keep solutions simple and direct because complexity is the enemy of reliability.");
+        if (IsTinyModel)
+        {
+            // Minimal: 3 rules only
+            sb.AppendLine("1. Read files before writing code.");
+            sb.AppendLine("2. Test your code before declaring done.");
+            sb.AppendLine("3. Be concise. Keep solutions simple.");
+        }
+        else
+        {
+            sb.AppendLine("1. Think before acting. Read existing files before writing code because understanding prevents errors.");
+            sb.AppendLine("2. Be concise in output but thorough in reasoning because efficiency matters.");
+            sb.AppendLine("3. Prefer editing over rewriting whole files because precision preserves intent.");
+            sb.AppendLine("4. Do not re-read files you have already read unless the file may have changed because redundancy wastes steps.");
+            sb.AppendLine("5. Test your code before declaring done because verification catches bugs.");
+            sb.AppendLine("6. Keep solutions simple and direct because complexity is the enemy of reliability.");
+        }
         sb.AppendLine();
 
         // Tool guidance
-        sb.AppendLine("You have access to these tools: read, run, write, search, bash.");
-        sb.AppendLine("Use them to complete the task. When done, respond without tool calls.");
+        if (IsTinyModel)
+        {
+            sb.AppendLine("Tools: read, run, write, search.");
+            sb.AppendLine("When done, respond without tool calls.");
+        }
+        else
+        {
+            sb.AppendLine("You have access to these tools: read, run, write, search, bash.");
+            sb.AppendLine("Use them to complete the task. When done, respond without tool calls.");
+        }
         sb.AppendLine();
 
-        // Batch scripting guidance (instead of a separate script tool)
-        sb.AppendLine("Efficiency: When you need multiple pieces of information or need to perform");
-        sb.AppendLine("several operations, write a short Python or shell script and run it with the");
-        sb.AppendLine("run tool. One script call is better than many separate tool calls — it saves");
-        sb.AppendLine("round-trips and keeps context clean. Example: instead of 3 separate search");
-        sb.AppendLine("calls, write a script that does grep + wc + sort in one shot.");
-        sb.AppendLine();
+        // Batch scripting guidance — only for models with enough context to benefit
+        if (!IsSmallModel)
+        {
+            sb.AppendLine("Efficiency: When you need multiple pieces of information or need to perform");
+            sb.AppendLine("several operations, write a short Python or shell script and run it with the");
+            sb.AppendLine("run tool. One script call is better than many separate tool calls — it saves");
+            sb.AppendLine("round-trips and keeps context clean. Example: instead of 3 separate search");
+            sb.AppendLine("calls, write a script that does grep + wc + sort in one shot.");
+            sb.AppendLine();
+        }
 
         // Working directory context
         sb.AppendLine($"Working directory: {_config.WorkingDirectory}");
@@ -95,7 +128,7 @@ public class PromptBuilder
 
     /// <summary>
     /// Build context about the working directory: file listing and README contents.
-    /// Keeps initial context under ~2000 tokens.
+    /// Skips README for small models, truncates aggressively for tiny models.
     /// </summary>
     private string BuildWorkingDirectoryContext()
     {
@@ -124,16 +157,19 @@ public class PromptBuilder
                 sb.AppendLine();
             }
 
-            // README.md content if present (helps model understand the project)
-            // Truncate at ~6000 chars (~2000 tokens for code-heavy content at chars/3)
-            var readmePath = Path.Combine(_config.WorkingDirectory, "README.md");
-            if (File.Exists(readmePath))
+            // README: skip for small models, truncate for tiny models
+            if (!IsSmallModel)
             {
-                var readme = File.ReadAllText(readmePath);
-                if (readme.Length > 6000)
-                    readme = readme[..6000] + "\n... (truncated)";
-                sb.AppendLine("README.md:");
-                sb.AppendLine(readme);
+                var readmePath = Path.Combine(_config.WorkingDirectory, "README.md");
+                if (File.Exists(readmePath))
+                {
+                    var readme = File.ReadAllText(readmePath);
+                    var maxChars = IsTinyModel ? 1500 : 6000;
+                    if (readme.Length > maxChars)
+                        readme = readme[..maxChars] + "\n... (truncated)";
+                    sb.AppendLine("README.md:");
+                    sb.AppendLine(readme);
+                }
             }
         }
         catch (Exception ex)

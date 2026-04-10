@@ -52,6 +52,46 @@ public class AnthropicClient : IModelClient
     public void RegisterTool(string name, string description, JsonElement parametersSchema)
         => _tools.Add(new ToolDef(name, description, parametersSchema));
 
+    /// <summary>
+    /// Known Anthropic model context windows. Anthropic has no API to query this.
+    /// Falls back to config value if model is not in this table.
+    /// </summary>
+    private static readonly Dictionary<string, int> KnownContextWindows = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["claude-sonnet-4"] = 200000,
+        ["claude-opus-4"] = 200000,
+        ["claude-3-5-sonnet"] = 200000,
+        ["claude-3-5-sonnet-20241022"] = 200000,
+        ["claude-3-5-sonnet-20240620"] = 200000,
+        ["claude-3-opus"] = 200000,
+        ["claude-3-opus-20240229"] = 200000,
+        ["claude-3-sonnet"] = 200000,
+        ["claude-3-sonnet-20240229"] = 200000,
+        ["claude-3-haiku"] = 200000,
+        ["claude-3-haiku-20240307"] = 200000,
+    };
+
+    /// <summary>
+    /// Return the known context window for this Anthropic model.
+    /// Returns null if model is not in the known table.
+    /// </summary>
+    public Task<int?> QueryContextWindow(CancellationToken ct = default)
+    {
+        // Exact match
+        if (KnownContextWindows.TryGetValue(_model, out var exact))
+            return Task.FromResult<int?>(exact);
+
+        // Prefix match (e.g. "claude-sonnet-4-20250514" matches "claude-sonnet-4")
+        foreach (var (prefix, ctx) in KnownContextWindows)
+        {
+            if (_model.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult<int?>(ctx);
+        }
+
+        // Default for any unknown Anthropic model
+        return Task.FromResult<int?>(200000);
+    }
+
     public async Task<ModelResponse> Complete(List<ChatMessage> messages, CancellationToken ct = default,
         int maxRetries = 3, IAgentObserver? observer = null, bool enableStreaming = false)
     {

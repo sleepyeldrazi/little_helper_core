@@ -272,4 +272,24 @@ This avoids adding a 6th tool (violating Rule #2) while achieving the same conte
 
 ---
 
+## Dynamic Prompt Compression
+
+The system prompt and tool descriptions adjust based on the model's context window:
+
+| Context Window | Model Tier | Prompt | README | Tool Descriptions | Batch Hint |
+|----------------|-----------|--------|--------|-------------------|------------|
+| < 8K | Tiny | 3 principles | Skip | Abbreviated | Skip |
+| 8K–16K | Small | 6 principles | Skip | Abbreviated | Skip |
+| >= 16K | Standard | 6 principles | Full | Standard | Include |
+
+Context window is auto-detected from the endpoint:
+- **OpenAI-compat**: queries `GET /models` for `context_length` or `max_model_len`
+- **Ollama**: queries `POST /api/show` for `{arch}.context_length`
+- **Anthropic**: known model table (all Claude models = 200K)
+- **Fallback**: uses config value from `models.json`
+
+Auto-detection is silent — if the query fails, the config value is used without error.
+
+---
+
 *Less code, more working.*

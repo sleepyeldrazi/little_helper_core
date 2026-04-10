@@ -10,14 +10,20 @@ namespace LittleHelper;
 /// </summary>
 public static class ToolSchemas
 {
+    // Context window thresholds for description tiers
+    private const int SmallModelThreshold = 16384;
+
     /// <summary>
-    /// Register the 5 standard tool schemas with a ModelClient.
+    /// Register the standard tool schemas with a ModelClient.
+    /// Uses abbreviated descriptions for small models (context window &lt; 16K).
     /// </summary>
-    public static void RegisterAll(IModelClient client)
+    public static void RegisterAll(IModelClient client, int contextWindow = 32768)
     {
+        var small = contextWindow < SmallModelThreshold;
+
         // Tool 1: read
         client.RegisterTool("read",
-            "Read a file's contents. Use offset/limit for large files.",
+            small ? "Read file contents." : "Read a file's contents. Use offset/limit for large files.",
             NormalizeToolSchema("""
             {
                 "type": "object",
@@ -32,7 +38,7 @@ public static class ToolSchemas
 
         // Tool 2: run
         client.RegisterTool("run",
-            "Execute a shell command in the working directory.",
+            small ? "Run a shell command." : "Execute a shell command in the working directory.",
             NormalizeToolSchema("""
             {
                 "type": "object",
@@ -46,7 +52,7 @@ public static class ToolSchemas
 
         // Tool 3: write
         client.RegisterTool("write",
-            "Write content to a file. Creates parent directories if needed.",
+            small ? "Write to a file." : "Write content to a file. Creates parent directories if needed.",
             NormalizeToolSchema("""
             {
                 "type": "object",
@@ -60,7 +66,7 @@ public static class ToolSchemas
 
         // Tool 4: search
         client.RegisterTool("search",
-            "Search file contents with grep/ripgrep.",
+            small ? "Search files with grep." : "Search file contents with grep/ripgrep.",
             NormalizeToolSchema("""
             {
                 "type": "object",
@@ -73,9 +79,9 @@ public static class ToolSchemas
             }
             """));
 
-        // Tool 5: bash (alias for run)
+        // Tool 5: bash (alias for run — some models prefer this name)
         client.RegisterTool("bash",
-            "Execute a bash command. Same as 'run'.",
+            small ? "Run a bash command." : "Execute a bash command. Same as 'run'.",
             NormalizeToolSchema("""
             {
                 "type": "object",

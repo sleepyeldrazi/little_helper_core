@@ -61,6 +61,90 @@ public class ModelClient : IModelClient
         _tools.Add(new ToolDef(name, description, parametersSchema));
 
     /// <summary>
+    /// Query the endpoint for the model's context window size.
+    /// Tries OpenAI-compatible /models endpoint, then Ollama /api/show.
+    /// Returns null if neither works.
+    /// </summary>
+    public async Task<int?> QueryContextWindow(CancellationToken ct = default)
+    {
+        // Strategy 1: OpenAI-compatible GET /models
+        try
+        {
+            var response = await _http.GetAsync($"{_endpoint}/models", ct);
+            if (response.IsSuccessStatusCode)
+            {
+                var json = await response.Content.ReadAsStringAsync(ct);
+                using var doc = JsonDocument.Parse(json);
+
+                if (doc.RootElement.TryGetProperty("data", out var data) &&
+                    data.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var model in data.EnumerateArray())
+                    {
+                        var id = model.TryGetProperty("id", out var idProp) ? idProp.GetString() ?? "" : "";
+                        // Match exact or prefix (e.g. "qwen3" matches "qwen3:14b")
+                        var modelPrefix = _model.Contains(':') ? _model.Split(':')[0] : _model;
+                        if (id == _model || _model.StartsWith(id + ":") || id.StartsWith(modelPrefix))
+                        {
+                            // vLLM style: max_model_len
+                            if (model.TryGetProperty("max_model_len", out var ml))
+                                return ml.GetInt32();
+                            // LiteLLM / generic: context_length
+                            if (model.TryGetProperty("context_length", out var cl))
+                                return cl.GetInt32();
+                        }
+                    }
+                }
+            }
+        }
+        catch { }
+
+        // Strategy 2: Ollama POST /api/show
+        try
+        {
+            var baseUri = new Uri(_endpoint);
+            // Detect Ollama by port or URL pattern
+            if (baseUri.Port == 11434 || baseUri.AbsolutePath.Contains("/v1"))
+            {
+                var ollamaBase = $"{baseUri.Scheme}://{baseUri.Authority}";
+                var showBody = JsonSerializer.Serialize(new { name = _model });
+                var content = new StringContent(showBody, Encoding.UTF8, "application/json");
+                var response = await _http.PostAsync($"{ollamaBase}/api/show", content, ct);
+                if (response.IsSuccessStatusCode)
+                {
+                    var json = await response.Content.ReadAsStringAsync(ct);
+                    using var doc = JsonDocument.Parse(json);
+
+                    if (doc.RootElement.TryGetProperty("model_info", out var info))
+                    {
+                        // Ollama returns "{architecture}.context_length"
+                        foreach (var prop in info.EnumerateObject())
+                        {
+                            if (prop.Name.EndsWith(".context_length") &&
+                                prop.Value.ValueKind == JsonValueKind.Number)
+                                return prop.Value.GetInt32();
+                        }
+                    }
+
+                    // Fallback: check parameters string for "num_ctx"
+                    if (doc.RootElement.TryGetProperty("parameters", out var paramsStr) &&
+                        paramsStr.ValueKind == JsonValueKind.String)
+                    {
+                        var p = paramsStr.GetString() ?? "";
+                        var ctxMatch = System.Text.RegularExpressions.Regex.Match(
+                            p, @"num_ctx\s+(\d+)");
+                        if (ctxMatch.Success && int.TryParse(ctxMatch.Groups[1].Value, out var ctx))
+                            return ctx;
+                    }
+                }
+            }
+        }
+        catch { }
+
+        return null;
+    }
+
+    /// <summary>
     /// Send a chat completion request with tool definitions.
     /// Retries on malformed responses (up to maxRetries times).
     /// Retries append hints to the last user message (not system messages).
