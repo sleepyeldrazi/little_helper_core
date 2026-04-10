@@ -142,7 +142,8 @@ public static class ToolSchemas
         {
             if (prop.Value.ValueKind == JsonValueKind.Object)
             {
-                // Recursively normalize nested objects
+                // Only recurse into actual sub-schemas (property definitions),
+                // not structural containers like "properties" or "required"
                 var nested = NormalizeObject(prop.Value);
                 result[prop.Name] = nested;
             }
@@ -153,8 +154,9 @@ public static class ToolSchemas
             }
         }
 
-        // Ensure top-level has type: object
-        if (!result.ContainsKey("type"))
+        // Only add "type": "object" if this looks like a schema (has "properties" or "required")
+        // Don't add it to structural containers or property value definitions that already have a type
+        if (!result.ContainsKey("type") && (result.ContainsKey("properties") || result.ContainsKey("required")))
             result["type"] = "object";
 
         return result;
