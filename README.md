@@ -26,7 +26,7 @@ No lanes, no ownership resolution, no prompt file loading, no tool-blind mode, n
 ## Source Files
 
 ```
-src/
+src/                                    — Library (core agent engine)
   Agent.cs              — FSM loop: Planning→Executing→Observing→Done, stall detection
   AgentControl.cs       — Pause/resume, message injection, tool interception
   AnthropicClient.cs    — Anthropic Messages API client (claude.ai / direct)
@@ -47,8 +47,9 @@ src/
   JsonRepair.cs         — Extract/fix JSON from model output (code fences, prefixes, etc.)
   ShellExecutor.cs      — Safe shell command execution via bash -c
   SessionLogger.cs      — JSONL session logs to ~/.little_helper/logs/
-  Program.cs            — CLI: positional prompt, models/skills subcommands
-```
+
+cli/                                    — CLI entry point (publishes as 'little_helper')
+  Program.cs            — Argument parsing, agent orchestration, output formatting
 
 ---
 

@@ -24,3 +24,32 @@ src/bin/
 src/obj/
 tests/bin/
 tests/obj/
+
+## Secrets / Credentials
+**/secrets.json
+.env
+*.env
+*.pem
+*.key
+*.pfx
+*.p12
+
+## Publish Profiles (may contain passwords)
+*.pubxml.user
+Properties/PublishProfiles/
+
+## NuGet
+*.nupkg
+*.snupkg
+packages/
+
+## Test Results / Coverage
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+coverage.cobertura.xml
+coverage/
+
+## Logs
+*.log
