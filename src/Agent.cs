@@ -226,7 +226,7 @@ public class Agent
                     var errorHint = string.IsNullOrEmpty(recentErrors)
                         ? "The previous tool call failed. Consider an alternative approach."
                         : $"The previous tool call failed: {recentErrors[..Math.Min(300, recentErrors.Length)]}\nConsider an alternative approach or fix the error before retrying.";
-                    _messages.Add(ChatMessage.System(errorHint));
+                    _messages.Add(ChatMessage.User(errorHint));
                     state = TransitionState(state, AgentState.Executing);
                     break;
             }
