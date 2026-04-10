@@ -22,7 +22,7 @@ public static class ToolSchemas
             {
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "File path relative to working directory" },
+                    "path": { "type": "string", "description": "File path (relative to working directory, or ~/ for home directory)" },
                     "offset": { "type": "integer", "description": "Starting line (1-indexed)" },
                     "limit": { "type": "integer", "description": "Max lines to read (0 = all)" }
                 },
@@ -66,6 +66,7 @@ public static class ToolSchemas
                 "type": "object",
                 "properties": {
                     "pattern": { "type": "string", "description": "Search pattern (regex supported)" },
+                    "path": { "type": "string", "description": "Directory to search in (default: working directory, or ~/ for home)" },
                     "file_type": { "type": "string", "description": "Optional file extension filter (e.g., 'cs', 'py')" }
                 },
                 "required": ["pattern"]

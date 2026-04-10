@@ -7,7 +7,9 @@ namespace LittleHelper;
 /// <summary>
 /// 5 tool implementations: read, run, write, search, bash.
 /// Each is a simple function: arguments -> ToolResult.
-/// All paths are resolved relative to the working directory — no path escape.
+/// All paths are resolved relative to the working directory.
+/// Tilde (~) expansion is supported — ~/ resolves to the user's home directory.
+/// Path escape check is enforced for write (destructive) but relaxed for read/search.
 /// </summary>
 public class ToolExecutor
 {
@@ -47,7 +49,8 @@ public class ToolExecutor
     /// <summary>Read file contents. Honors offset/limit. Never truncates (Rule #6).</summary>
     private Task<ToolResult> Read(JsonElement args)
     {
-        var path = ResolvePath(args.GetProperty("path").GetString()!);
+        // Read allows paths outside working dir (e.g. ~/.little_helper/models.json)
+        var path = ResolvePath(args.GetProperty("path").GetString()!, allowEscape: true);
         int offset = args.TryGetProperty("offset", out var o) ? o.GetInt32() : 1;
         int limit = args.TryGetProperty("limit", out var l) ? l.GetInt32() : 0;
 
@@ -64,7 +67,7 @@ public class ToolExecutor
             int endLine = startLine + count;
 
             var output = new StringBuilder();
-            output.AppendLine($"File: {GetRelativePath(path)} ({lines.Length} lines total)");
+            output.AppendLine($"File: {GetDisplayPath(path)} ({lines.Length} lines total)");
 
             for (int i = startLine; i < endLine; i++)
                 output.AppendLine($"{i + 1,6}|{lines[i]}");
@@ -101,7 +104,8 @@ public class ToolExecutor
     /// <summary>Write content to file. Creates parent directories. No parsing (Rule #3).</summary>
     private async Task<ToolResult> Write(JsonElement args)
     {
-        var path = ResolvePath(args.GetProperty("path").GetString()!);
+        // Write enforces path escape check — can only write inside working dir
+        var path = ResolvePath(args.GetProperty("path").GetString()!, allowEscape: false);
         var content = args.GetProperty("content").GetString() ?? "";
 
         try
@@ -112,7 +116,7 @@ public class ToolExecutor
 
             await File.WriteAllTextAsync(path, content);
             var bytes = Encoding.UTF8.GetByteCount(content);
-            return new ToolResult($"Wrote {bytes} bytes to {GetRelativePath(path)}", IsError: false, FilePath: path);
+            return new ToolResult($"Wrote {bytes} bytes to {GetDisplayPath(path)}", IsError: false, FilePath: path);
         }
         catch (Exception ex)
         {
@@ -124,31 +128,35 @@ public class ToolExecutor
     private async Task<ToolResult> SearchAsync(JsonElement args)
     {
         var pattern = args.GetProperty("pattern").GetString()!;
+        var searchPath = args.TryGetProperty("path", out var sp) ? sp.GetString() : null;
         var fileType = args.TryGetProperty("file_type", out var ft) ? ft.GetString() : null;
         bool useRg = IsRipgrepAvailable();
+
+        // Search allows paths outside working dir
+        var resolvedSearchPath = searchPath != null
+            ? ResolvePath(searchPath, allowEscape: true)
+            : _workingDir;
 
         string command;
         if (useRg)
         {
             command = fileType != null
-                ? $"rg -n --max-count 200 -g '*.{ShellExecutor.EscapeShellArg(fileType)}' -- {ShellExecutor.EscapeShellArg(pattern)}"
-                : $"rg -n --max-count 200 -- {ShellExecutor.EscapeShellArg(pattern)}";
+                ? $"rg -n --max-count 200 -g '*.{ShellExecutor.EscapeShellArg(fileType)}' -- {ShellExecutor.EscapeShellArg(pattern)} {ShellExecutor.EscapeShellArg(resolvedSearchPath)}"
+                : $"rg -n --max-count 200 -- {ShellExecutor.EscapeShellArg(pattern)} {ShellExecutor.EscapeShellArg(resolvedSearchPath)}";
         }
         else
         {
             command = fileType != null
-                ? $"grep -rn --include='*.{ShellExecutor.EscapeShellArg(fileType)}' -- {ShellExecutor.EscapeShellArg(pattern)} . 2>/dev/null | head -200"
-                : $"grep -rn -- {ShellExecutor.EscapeShellArg(pattern)} . 2>/dev/null | head -200";
+                ? $"grep -rn --include='*.{ShellExecutor.EscapeShellArg(fileType)}' -- {ShellExecutor.EscapeShellArg(pattern)} {ShellExecutor.EscapeShellArg(resolvedSearchPath)} 2>/dev/null | head -200"
+                : $"grep -rn -- {ShellExecutor.EscapeShellArg(pattern)} {ShellExecutor.EscapeShellArg(resolvedSearchPath)} 2>/dev/null | head -200";
         }
 
         var result = await ShellExecutor.RunViaBashCAsync(command, _workingDir, 30000);
 
         if (result.TimedOut)
             return new ToolResult(result.Output, IsError: true);
-
         if (string.IsNullOrWhiteSpace(result.Output))
             return new ToolResult("No matches found.", IsError: false);
-
         return new ToolResult(result.Output, IsError: false);
     }
 
@@ -187,16 +195,47 @@ public class ToolExecutor
         return new ToolResult(output.ToString(), IsError: isError);
     }
 
-    /// <summary>Resolve path relative to working directory. Prevents path escape.</summary>
-    private string ResolvePath(string inputPath)
+    /// <summary>
+    /// Resolve path relative to working directory.
+    /// Expands ~ to user's home directory.
+    /// When allowEscape is false (write), blocks paths outside working dir.
+    /// When allowEscape is true (read, search), allows any path.
+    /// </summary>
+    private string ResolvePath(string inputPath, bool allowEscape = false)
     {
-        var fullPath = Path.GetFullPath(Path.Combine(_workingDir, inputPath));
-        if (fullPath != _workingDir && !fullPath.StartsWith(_workingDir + Path.DirectorySeparatorChar))
-            throw new InvalidOperationException($"Path escape blocked: '{inputPath}' resolves outside working directory");
+        // Expand tilde to home directory
+        string expanded = inputPath;
+        if (expanded.StartsWith("~/") || expanded == "~")
+        {
+            var homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            expanded = expanded == "~"
+                ? homeDir
+                : Path.Combine(homeDir, expanded[2..]);
+        }
+
+        var fullPath = Path.GetFullPath(Path.Combine(_workingDir, expanded));
+
+        if (!allowEscape && fullPath != _workingDir &&
+            !fullPath.StartsWith(_workingDir + Path.DirectorySeparatorChar))
+        {
+            throw new InvalidOperationException(
+                $"Path escape blocked: '{inputPath}' resolves outside working directory. " +
+                "Use bash for operations outside the project directory.");
+        }
+
         return fullPath;
     }
 
-    private string GetRelativePath(string fullPath) => Path.GetRelativePath(_workingDir, fullPath);
+    /// <summary>
+    /// Display path — shows ~ for home, relative for working dir, absolute otherwise.
+    /// </summary>
+    private string GetDisplayPath(string fullPath)
+    {
+        var homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (fullPath.StartsWith(homeDir + Path.DirectorySeparatorChar))
+            return "~" + fullPath[homeDir.Length..];
+        return Path.GetRelativePath(_workingDir, fullPath);
+    }
 
     private bool IsDestructive(string command)
     {

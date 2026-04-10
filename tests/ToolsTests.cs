@@ -137,23 +137,35 @@ public class ToolsTests
     }
 
     [Fact]
-    public async Task PathEscape_Blocked_ThrowsException()
+    public async Task PathEscape_ReadAllowsOutsideWorkingDir()
     {
         var executor = CreateExecutor();
-        // Try to read /etc/passwd (outside working directory)
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await executor.Execute("read",
-                JsonDocument.Parse("{\"path\": \"../../etc/passwd\"}").RootElement));
+        // Read allows paths outside working dir (e.g. ~/.little_helper/models.json)
+        // This should NOT throw — the file may not exist but path escape is not blocked
+        var result = await executor.Execute("read",
+            JsonDocument.Parse("{\"path\": \"../../etc/hostname\"}").RootElement);
+        // Result will be "file not found" (not path escape error) unless /etc/hostname exists
+        Assert.DoesNotContain("Path escape blocked", result.Output);
     }
 
     [Fact]
-    public async Task PathEscape_SiblingDir_Blocked()
+    public async Task PathEscape_WriteBlockedOutsideWorkingDir()
+    {
+        var executor = CreateExecutor();
+        // Write should block paths outside working directory
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await executor.Execute("write",
+                JsonDocument.Parse("{\"path\": \"../../tmp/evil.txt\", \"content\": \"pwned\"}").RootElement));
+    }
+
+    [Fact]
+    public async Task PathEscape_SiblingDir_WriteBlocked()
     {
         var executor = CreateExecutor();
         // /tmp/something-evil should not match /tmp/something
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await executor.Execute("read",
-                JsonDocument.Parse("{\"path\": \"../something-evil/foo.txt\"}").RootElement));
+            await executor.Execute("write",
+                JsonDocument.Parse("{\"path\": \"../something-evil/foo.txt\", \"content\": \"x\"}").RootElement));
     }
 
     [Fact]
