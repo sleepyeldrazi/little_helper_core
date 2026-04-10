@@ -312,6 +312,7 @@ public class Agent
             {
                 "read" => args.TryGetProperty("path", out var p) ? p.GetString() ?? "" : "",
                 "write" => args.TryGetProperty("path", out var w) ? w.GetString() ?? "" : "",
+                "edit" or "patch" => args.TryGetProperty("path", out var e) ? e.GetString() ?? "" : "",
                 "run" or "bash" => args.TryGetProperty("command", out var c) ? Truncate(c.GetString() ?? "", 80) : "",
                 "search" => args.TryGetProperty("pattern", out var s) ? $"\"{s.GetString()}\"" : "",
                 "spawn" => args.TryGetProperty("task", out var sp)
