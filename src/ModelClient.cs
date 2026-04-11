@@ -146,6 +146,76 @@ public class ModelClient : IModelClient
     }
 
     /// <summary>
+    /// Fetch available model IDs from an OpenAI-compatible endpoint.
+    /// Also tries Ollama /api/tags. Returns empty list on failure.
+    /// </summary>
+    public static async Task<List<string>> FetchAvailableModels(
+        string endpoint, string? apiKey = null, CancellationToken ct = default)
+    {
+        endpoint = endpoint.TrimEnd('/');
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        if (!string.IsNullOrEmpty(apiKey))
+            http.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", apiKey);
+
+        // Strategy 1: OpenAI-compatible GET /models
+        try
+        {
+            var response = await http.GetAsync($"{endpoint}/models", ct);
+            if (response.IsSuccessStatusCode)
+            {
+                var json = await response.Content.ReadAsStringAsync(ct);
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("data", out var data) &&
+                    data.ValueKind == JsonValueKind.Array)
+                {
+                    var ids = new List<string>();
+                    foreach (var m in data.EnumerateArray())
+                    {
+                        if (m.TryGetProperty("id", out var idProp))
+                        {
+                            var id = idProp.GetString();
+                            if (!string.IsNullOrEmpty(id)) ids.Add(id);
+                        }
+                    }
+                    if (ids.Count > 0) return ids;
+                }
+            }
+        }
+        catch { }
+
+        // Strategy 2: Ollama GET /api/tags
+        try
+        {
+            var baseUri = new Uri(endpoint);
+            var ollamaBase = $"{baseUri.Scheme}://{baseUri.Authority}";
+            var response = await http.GetAsync($"{ollamaBase}/api/tags", ct);
+            if (response.IsSuccessStatusCode)
+            {
+                var json = await response.Content.ReadAsStringAsync(ct);
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("models", out var models) &&
+                    models.ValueKind == JsonValueKind.Array)
+                {
+                    var ids = new List<string>();
+                    foreach (var m in models.EnumerateArray())
+                    {
+                        if (m.TryGetProperty("name", out var nameProp))
+                        {
+                            var name = nameProp.GetString();
+                            if (!string.IsNullOrEmpty(name)) ids.Add(name);
+                        }
+                    }
+                    if (ids.Count > 0) return ids;
+                }
+            }
+        }
+        catch { }
+
+        return new List<string>();
+    }
+
+    /// <summary>
     /// Send a chat completion request with tool definitions.
     /// Retries on malformed responses (up to maxRetries times).
     /// Retries append hints to the last user message (not system messages).
