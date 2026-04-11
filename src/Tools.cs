@@ -476,7 +476,11 @@ public class ToolExecutor
                 : Path.Combine(homeDir, expanded[2..]);
         }
 
-        var fullPath = Path.GetFullPath(Path.Combine(_workingDir, expanded));
+        // If expanded path is already absolute (e.g., after tilde expansion), use it directly
+        // Otherwise combine with working directory
+        var fullPath = Path.IsPathRooted(expanded)
+            ? Path.GetFullPath(expanded)
+            : Path.GetFullPath(Path.Combine(_workingDir, expanded));
 
         if (!allowEscape && fullPath != _workingDir &&
             !fullPath.StartsWith(_workingDir + Path.DirectorySeparatorChar))
