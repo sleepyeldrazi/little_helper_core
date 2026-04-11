@@ -117,6 +117,7 @@ public class Agent
                     var response = await _modelClient.Complete(_messages, ct, observer: _observer, enableStreaming: _config.EnableStreaming);
                     step++;
                     Log($"[Step {step}] Model responded ({response.TokensUsed} tokens, {response.ToolCalls.Count} tool calls)");
+                    if (_logger == null) Log("[Warning] SessionLogger is null, step will not be logged");
                     _logger?.Step(step, response.TokensUsed, response.ThinkingTokens,
                         response.ToolCalls.Count, response.ThinkingContent, response.Content);
 
@@ -240,6 +241,7 @@ public class Agent
 
         Log($"[Done] Steps: {step}, Tokens: {_modelClient.TotalTokensUsed}, Thinking: {_modelClient.TotalThinkingTokens}, Success: {state == AgentState.Done}");
 
+        if (_logger == null) Log("[Warning] SessionLogger is null at session end");
         _logger?.End(state == AgentState.Done, step, _modelClient.TotalTokensUsed,
             _modelClient.TotalThinkingTokens, _filesChanged);
 

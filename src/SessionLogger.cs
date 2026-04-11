@@ -102,10 +102,17 @@ public class SessionLogger : IDisposable
     {
         try
         {
-            _writer.WriteLine(JsonSerializer.Serialize(record,
-                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower }));
+            if (_writer == null) return;
+            var json = JsonSerializer.Serialize(record,
+                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
+            _writer.WriteLine(json);
+            _writer.Flush();  // Ensure immediate write
         }
-        catch { /* logging should never crash the agent */ }
+        catch (Exception ex)
+        {
+            // Log to stderr for debugging, but don't crash the agent
+            Console.Error.WriteLine($"[SessionLogger] Failed to write: {ex.Message}");
+        }
     }
 
     private static string? Truncate(string? s, int maxLen) =>
