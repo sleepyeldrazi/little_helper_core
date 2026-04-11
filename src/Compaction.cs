@@ -171,8 +171,16 @@ public class Compaction
         var filePath = msg.ToolResult.FilePath;
         var lineCount = msg.Content.Split('\n').Length;
 
+        // Don't compact bash/terminal results that have no file path.
+        // Unlike file reads (reproducible), bash outputs can't be "re-read" and
+        // losing them causes the model to re-run commands, creating loops.
+        // Design Rule #6: "No Truncation of Tool Output" — oversized messages
+        // are handled separately by TruncateOversizedMessage.
+        if (string.IsNullOrEmpty(filePath))
+            return msg;
+
         // Try code-aware compression for file reads (tool results with FilePath)
-        if (!string.IsNullOrEmpty(filePath) && CodeCompressor.IsCodeFile(filePath))
+        if (CodeCompressor.IsCodeFile(filePath))
         {
             var compressed = CodeCompressor.Compress(msg.Content);
             if (compressed != null)
