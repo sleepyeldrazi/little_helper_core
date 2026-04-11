@@ -180,6 +180,7 @@ public class Agent
 
                         if (!string.IsNullOrEmpty(result.FilePath) &&
                             !result.IsError &&
+                            IsWriteTool(intercepted.Name) &&
                             !_filesChanged.Contains(result.FilePath))
                         {
                             _filesChanged.Add(result.FilePath);
@@ -306,6 +307,11 @@ public class Agent
     /// read -> path, write -> path, run/bash -> command, search -> pattern.
     /// Public so TUI and other consumers can reuse the formatting.
     /// </summary>
+    private static bool IsWriteTool(string name) =>
+        name.Equals("write", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("edit", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("patch", StringComparison.OrdinalIgnoreCase);
+
     public static string FormatToolDetail(string toolName, System.Text.Json.JsonElement args)
     {
         try
