@@ -30,10 +30,13 @@ public class ToolExecutor
     /// </summary>
     public Func<string, string, Task<ToolResult>>? SpawnHandler { get; set; }
 
-    public ToolExecutor(string workingDirectory, bool blockDestructive = false)
+    private bool _allowEscape;
+
+    public ToolExecutor(string workingDirectory, bool blockDestructive = false, bool allowEscape = false)
     {
         _workingDir = Path.GetFullPath(workingDirectory);
         _blockDestructive = blockDestructive;
+        _allowEscape = allowEscape;
 
         _destructiveCommands = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -44,6 +47,9 @@ public class ToolExecutor
             "sudo", "doas"
         };
     }
+
+    /// <summary>Enable/disable path escape protection (yolo mode).</summary>
+    public void SetAllowEscape(bool allow) => _allowEscape = allow;
 
     /// <summary>Dispatch a tool call by name. Returns the tool result.</summary>
     public async Task<ToolResult> Execute(string toolName, JsonElement arguments)
@@ -482,12 +488,20 @@ public class ToolExecutor
             ? Path.GetFullPath(expanded)
             : Path.GetFullPath(Path.Combine(_workingDir, expanded));
 
-        if (!allowEscape && fullPath != _workingDir &&
+        // Check if path is within ~/.little_helper/ (skills, config, logs are legitimate targets)
+        var homeDir2 = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var littleHelperDir = Path.Combine(homeDir2, ".little_helper");
+        var isLittleHelperPath = fullPath == littleHelperDir ||
+            fullPath.StartsWith(littleHelperDir + Path.DirectorySeparatorChar);
+
+        // Allow if: yolo mode enabled, or path is in .little_helper, or path is in working dir
+        var effectiveAllowEscape = allowEscape || _allowEscape;
+        if (!effectiveAllowEscape && !isLittleHelperPath && fullPath != _workingDir &&
             !fullPath.StartsWith(_workingDir + Path.DirectorySeparatorChar))
         {
             throw new InvalidOperationException(
                 $"Path escape blocked: '{inputPath}' resolves outside working directory. " +
-                "Use bash for operations outside the project directory.");
+                "Enable :yolo mode to allow writing outside the project directory.");
         }
 
         return fullPath;
