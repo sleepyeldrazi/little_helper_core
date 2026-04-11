@@ -98,14 +98,15 @@ public static class CodeCompressor
         return result;
     }
 
-    /// <summary>Check if a file path looks like source code.</summary>
+    /// <summary>Check if a file path looks like source code or structured text.</summary>
     public static bool IsCodeFile(string? filePath)
     {
         if (string.IsNullOrEmpty(filePath)) return false;
         var ext = Path.GetExtension(filePath).ToLowerInvariant();
         return ext is ".cs" or ".py" or ".js" or ".ts" or ".go" or ".rs" or ".java"
             or ".cpp" or ".c" or ".h" or ".hpp" or ".rb" or ".kt" or ".swift"
-            or ".scala" or ".zig" or ".nim";
+            or ".scala" or ".zig" or ".nim"
+            or ".md" or ".mdx" or ".txt" or ".rst";  // Documentation/text files need structure preservation too
     }
 
     /// <summary>Check if a line is a code signature or declaration.</summary>
