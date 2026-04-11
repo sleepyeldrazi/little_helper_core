@@ -22,12 +22,18 @@ public class PromptBuilder
     private const int SmallModelThreshold = 16384;  // < 16K: stripped prompt
     private const int TinyModelThreshold = 8192;    // < 8K: minimal prompt
 
-    private bool IsSmallModel => _config.MaxContextTokens < SmallModelThreshold;
-    private bool IsTinyModel => _config.MaxContextTokens < TinyModelThreshold || IsModelSizeTiny();
+    // Default to full prompts. Only use compressed prompts if:
+    // 1. Model name indicates small size (e.g., "4b", "8b") OR
+    // 2. Context window is explicitly small AND model name doesn't indicate large size
+    private bool IsSmallModel => IsModelSizeSmall() ||
+        (_config.MaxContextTokens < SmallModelThreshold && !IsModelSizeLarge());
+
+    private bool IsTinyModel => IsModelSizeTiny() ||
+        (_config.MaxContextTokens < TinyModelThreshold && !IsModelSizeLarge());
 
     /// <summary>
     /// Check if the model name contains a parameter count ≤ 8B (e.g. "qwen3:4b", "llama3.1:8b").
-    /// Models this small need stripped prompts regardless of context window.
+    /// Models this small need stripped prompts.
     /// </summary>
     private bool IsModelSizeTiny()
     {
@@ -36,6 +42,33 @@ public class PromptBuilder
         if (!match.Success) return false;
         if (double.TryParse(match.Groups[1].Value, out var billions))
             return billions <= 8.0;
+        return false;
+    }
+
+    /// <summary>
+    /// Check if the model name indicates small size (≤ 16B).
+    /// </summary>
+    private bool IsModelSizeSmall()
+    {
+        var name = _config.ModelName.ToLowerInvariant();
+        var match = System.Text.RegularExpressions.Regex.Match(name, @"(\d+(?:\.\d+)?)\s*b");
+        if (!match.Success) return false;
+        if (double.TryParse(match.Groups[1].Value, out var billions))
+            return billions <= 16.0;
+        return false;
+    }
+
+    /// <summary>
+    /// Check if the model name contains a parameter count > 16B (e.g. "70b", "405b").
+    /// Models this large get full prompts even with smaller context windows.
+    /// </summary>
+    private bool IsModelSizeLarge()
+    {
+        var name = _config.ModelName.ToLowerInvariant();
+        var match = System.Text.RegularExpressions.Regex.Match(name, @"(\d+(?:\.\d+)?)\s*b");
+        if (!match.Success) return false;
+        if (double.TryParse(match.Groups[1].Value, out var billions))
+            return billions > 16.0;
         return false;
     }
 
@@ -86,15 +119,15 @@ public class PromptBuilder
         sb.AppendLine("Operating principles:");
         if (IsTinyModel)
         {
-            // Minimal: 3 rules only
+            // Minimal: 3 rules + planning hint
             sb.AppendLine("1. Read files before writing code.");
-            sb.AppendLine("2. Test your code before declaring done.");
-            sb.AppendLine("3. Be concise. Keep solutions simple.");
+            sb.AppendLine("2. Plan before acting on multi-step tasks.");
+            sb.AppendLine("3. Test your code before declaring done.");
         }
         else
         {
             sb.AppendLine("1. Think before acting. Read existing files before writing code because understanding prevents errors.");
-            sb.AppendLine("2. Be concise in output but thorough in reasoning because efficiency matters.");
+            sb.AppendLine("2. When given a multi-step or complex task, first identify each goal, then create a step-by-step plan that chronologically addresses each task before beginning work.");
             sb.AppendLine("3. Prefer the edit tool over rewriting whole files with write because it saves tokens and preserves unchanged code.");
             sb.AppendLine("4. Do not re-read files you have already read unless the file may have changed because redundancy wastes steps.");
             sb.AppendLine("5. Test your code before declaring done because verification catches bugs.");
