@@ -79,7 +79,7 @@ public class PromptBuilder
     }
 
     /// <summary>
-    /// Build the initial context: system prompt, directory listing, and user query.
+    /// Build the initial context: system prompt, working directory context (full models only), and user query.
     /// Research: Lost in the Middle — query at end yields up to 30% improvement.
     /// </summary>
     public List<ChatMessage> BuildInitialContext(string userPrompt)
@@ -184,24 +184,28 @@ public class PromptBuilder
         try
         {
             // Directory structure (names only, not contents)
-            var files = Directory.GetFiles(_config.WorkingDirectory, "*", SearchOption.TopDirectoryOnly)
-                .Select(f => Path.GetFileName(f))
-                .OrderBy(f => f)
-                .ToList();
-
-            var dirs = Directory.GetDirectories(_config.WorkingDirectory, "*", SearchOption.TopDirectoryOnly)
-                .Select(d => Path.GetFileName(d))
-                .OrderBy(d => d)
-                .ToList();
-
-            if (files.Count > 0 || dirs.Count > 0)
+            // Only include for full-context models — tiny/small models get stripped context
+            if (!IsSmallModel)
             {
-                sb.AppendLine("Files in working directory:");
-                foreach (var dir in dirs)
-                    sb.AppendLine($"  {dir}/");
-                foreach (var file in files)
-                    sb.AppendLine($"  {file}");
-                sb.AppendLine();
+                var files = Directory.GetFiles(_config.WorkingDirectory, "*", SearchOption.TopDirectoryOnly)
+                    .Select(f => Path.GetFileName(f))
+                    .OrderBy(f => f)
+                    .ToList();
+
+                var dirs = Directory.GetDirectories(_config.WorkingDirectory, "*", SearchOption.TopDirectoryOnly)
+                    .Select(d => Path.GetFileName(d))
+                    .OrderBy(d => d)
+                    .ToList();
+
+                if (files.Count > 0 || dirs.Count > 0)
+                {
+                    sb.AppendLine("Files in working directory:");
+                    foreach (var dir in dirs)
+                        sb.AppendLine($"  {dir}/");
+                    foreach (var file in files)
+                        sb.AppendLine($"  {file}");
+                    sb.AppendLine();
+                }
             }
 
             // README: skip for small models, truncate for tiny models
