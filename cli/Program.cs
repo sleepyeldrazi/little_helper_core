@@ -239,7 +239,8 @@ class Program
             MaxContextTokens: resolved.ContextWindow, MaxSteps: maxSteps,
             MaxRetries: 2, StallThreshold: 5,
             WorkingDirectory: Path.GetFullPath(dir), Temperature: resolved.Temperature,
-            ApiKey: resolved.ApiKey, ExtraHeaders: resolved.Headers);
+            ApiKey: resolved.ApiKey, ExtraHeaders: resolved.Headers,
+            PromptTier: resolved.PromptTier);
 
         Console.WriteLine("little_helper v0.1.0");
         Console.WriteLine($"Model: {resolved.ModelId}");

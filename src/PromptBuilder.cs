@@ -24,8 +24,23 @@ public class PromptBuilder
     private const double TinyModelMaxB = 14.0;    // <= 14B: minimal prompt, no rationales
     private const double SmallModelMaxB = 35.0;   // <= 35B: principles with rationales, no batch hint
 
-    private bool IsTinyModel => IsModelSizeAtMost(TinyModelMaxB);
-    private bool IsSmallModel => IsModelSizeAtMost(SmallModelMaxB);
+    // Resolved tier from config override ("tiny"/"small"/"full") or null for auto
+    private readonly string? _forcedTier;
+
+    /// <summary>Effective tier: override from config if set, otherwise auto-detect from model name.</summary>
+    private string EffectiveTier
+    {
+        get
+        {
+            if (_forcedTier != null) return _forcedTier;
+            if (IsModelSizeAtMost(TinyModelMaxB)) return "tiny";
+            if (IsModelSizeAtMost(SmallModelMaxB)) return "small";
+            return "full";
+        }
+    }
+
+    private bool IsTinyModel => EffectiveTier == "tiny";
+    private bool IsSmallModel => EffectiveTier == "tiny" || EffectiveTier == "small";
 
     /// <summary>
     /// Check if the model name indicates a parameter count at or below the given threshold.
@@ -46,6 +61,10 @@ public class PromptBuilder
     {
         _config = config;
         _skills = skills;
+
+        // Resolve prompt tier override: normalize "auto"/null to null (auto-detect), anything else is forced
+        var tier = config.PromptTier?.Trim().ToLowerInvariant();
+        _forcedTier = (tier is null or "auto" or "") ? null : tier;
     }
 
     /// <summary>

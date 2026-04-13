@@ -33,7 +33,7 @@ public static class ConfigResolver
             var contextWindow = maxContextArg > 0 ? maxContextArg : resolved.ContextWindow;
             var temperature = temperatureArg > 0 ? temperatureArg : resolved.Temperature;
 
-            return new ResolvedConfig(modelId, endpoint, apiKey, resolved.Headers, contextWindow, temperature, resolved.ApiType);
+            return new ResolvedConfig(modelId, endpoint, apiKey, resolved.Headers, contextWindow, temperature, resolved.ApiType, resolved.PromptTier);
         }
 
         // Not in config — use CLI defaults or hardcoded defaults
@@ -52,4 +52,5 @@ public record ResolvedConfig(
     Dictionary<string, string>? Headers,
     int ContextWindow,
     double Temperature,
-    string ApiType = "openai");
+    string ApiType = "openai",
+    string? PromptTier = null);

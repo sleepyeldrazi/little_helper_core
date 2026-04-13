@@ -118,7 +118,8 @@ public record AgentConfig(
     double Temperature = 0.3,  // model sampling temperature
     string? ApiKey = null,     // optional API key for cloud providers
     Dictionary<string, string>? ExtraHeaders = null,  // optional extra HTTP headers
-    bool EnableStreaming = false  // SSE streaming via observer OnStreamChunk
+    bool EnableStreaming = false,  // SSE streaming via observer OnStreamChunk
+    string? PromptTier = null  // override prompt tier: "tiny"/"small"/"full", null = auto
 )
 {
     /// <summary>Default configuration for local models.</summary>

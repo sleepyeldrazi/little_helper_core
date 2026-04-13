@@ -38,7 +38,7 @@ public class ModelConfig
                     return new ResolvedModel(
                         provider.BaseUrl, modelId, provider.ApiKey ?? "",
                         model.ContextWindow, model.Temperature, provider.ApiType, provider.Headers,
-                        provider.AuthType, provider.ToolsEnabled);
+                        provider.AuthType, provider.ToolsEnabled, model.PromptTier);
                 }
             }
 
@@ -64,7 +64,7 @@ public class ModelConfig
                 return new ResolvedModel(
                     provider.BaseUrl, model.Id, provider.ApiKey ?? "",
                     model.ContextWindow, model.Temperature, provider.ApiType, provider.Headers,
-                    provider.AuthType, provider.ToolsEnabled);
+                    provider.AuthType, provider.ToolsEnabled, model.PromptTier);
             }
         }
 
@@ -192,9 +192,16 @@ public class ModelEntry
     public string? Name { get; set; }
     public int ContextWindow { get; set; } = 32768;
     public double Temperature { get; set; } = 0.3;
+
+    /// <summary>
+    /// Override the auto-detected prompt tier.
+    /// Valid values: "tiny" (stripped prompt for &lt;=14B), "small" (principles for &lt;=35B),
+    /// "full" (complete prompt for frontier), "auto" or null (auto-detect from model name, default).
+    /// </summary>
+    public string? PromptTier { get; set; }
 }
 
-/// <summary>Resolved model ready for use: endpoint + model id + api key + settings + API type + auth type.</summary>
+/// <summary>Resolved model ready for use: endpoint + model id + api key + settings + API type + auth type + prompt tier.</summary>
 public record ResolvedModel(string BaseUrl, string ModelId, string ApiKey, int ContextWindow,
     double Temperature, string ApiType = "openai", Dictionary<string, string>? Headers = null,
-    string AuthType = "x-api-key", bool? ToolsEnabled = null);
+    string AuthType = "x-api-key", bool? ToolsEnabled = null, string? PromptTier = null);
