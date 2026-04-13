@@ -5,17 +5,27 @@ using System.Text.Json;
 namespace LittleHelper;
 
 /// <summary>
-/// 5 tool implementations: read, run, write, search, bash.
+/// 5 tool implementations: read, bash, write, edit, search.
 /// Each is a simple function: arguments -> ToolResult.
 /// All paths are resolved relative to the working directory.
 /// Tilde (~) expansion is supported — ~/ resolves to the user's home directory.
 /// Path escape check is enforced for write (destructive) but relaxed for read/search.
+///
+/// CWD tracking: bash/run commands execute with a persistent current directory.
+/// When a model does `cd /app/project`, subsequent commands start from that directory.
+/// This prevents the "fatal: not a git repository" loops seen in benchmarks.
 /// </summary>
 public class ToolExecutor
 {
     private readonly string _workingDir;
     private readonly HashSet<string> _destructiveCommands;
     private readonly bool _blockDestructive;
+
+    /// <summary>
+    /// Tracked current working directory. Updated when commands contain `cd`.
+    /// Initialized to the configured working directory.
+    /// </summary>
+    private string _currentDir;
 
     /// <summary>
     /// Sub-agent spawn manager. Handles tmux session lifecycle and spawn logging.
@@ -35,6 +45,7 @@ public class ToolExecutor
     public ToolExecutor(string workingDirectory, bool blockDestructive = false, bool allowEscape = false)
     {
         _workingDir = Path.GetFullPath(workingDirectory);
+        _currentDir = _workingDir;
         _blockDestructive = blockDestructive;
         _allowEscape = allowEscape;
 
@@ -57,7 +68,12 @@ public class ToolExecutor
         // Validation guard: catch malformed args before execution
         var validationError = Validate(toolName, arguments);
         if (validationError != null)
-            return new ToolResult(validationError, IsError: true);
+        {
+            // Append usage example so the model can self-correct on next call.
+            // Research: structured error hints reduce retry loops (StateFlow error state).
+            var example = GetUsageExample(toolName);
+            return new ToolResult(validationError + "\n\n" + example, IsError: true);
+        }
 
         return toolName.ToLowerInvariant() switch
         {
@@ -72,6 +88,21 @@ public class ToolExecutor
             _ => new ToolResult($"Unknown tool: {toolName}", IsError: true)
         };
     }
+
+    /// <summary>
+    /// Get a usage example for a tool, injected into validation error messages
+    /// so the model can self-correct without wasting additional steps.
+    /// </summary>
+    private static string GetUsageExample(string toolName) => toolName.ToLowerInvariant() switch
+    {
+        "read" => "Example: {\"path\": \"src/main.py\", \"offset\": 1, \"limit\": 50}",
+        "write" => "Example: {\"path\": \"src/main.py\", \"content\": \"print('hello')\"}",
+        "edit" or "patch" => "Example: {\"path\": \"src/main.py\", \"old_string\": \"old text\", \"new_string\": \"new text\"}",
+        "run" or "bash" => "Example: {\"command\": \"ls -la\", \"timeout\": 60}",
+        "search" => "Example: {\"pattern\": \"TODO\", \"path\": \"src\", \"file_type\": \"py\"}",
+        "spawn" => "Example: {\"task\": \"find all TODO comments\", \"type\": \"small\"}",
+        _ => ""
+    };
 
     /// <summary>
     /// Validate tool call arguments before execution.
@@ -217,6 +248,7 @@ public class ToolExecutor
     /// <summary>
     /// Execute shell command via stdin pipe (avoids shell injection).
     /// Default timeout 60s. Full output, no truncation.
+    /// Uses tracked _currentDir so `cd` persists across calls.
     /// </summary>
     private async Task<ToolResult> Run(JsonElement args)
     {
@@ -228,8 +260,42 @@ public class ToolExecutor
                 $"Command blocked (destructive): {command}. Set blockDestructive=false to allow.",
                 IsError: true);
 
-        var result = await ShellExecutor.RunViaStdinAsync(command, _workingDir, timeoutSec);
+        // Track cd in command to update _currentDir for subsequent calls
+        UpdateCurrentDir(command);
+
+        var result = await ShellExecutor.RunViaStdinAsync(command, _currentDir, timeoutSec);
         return FormatShellResult(result);
+    }
+
+    /// <summary>
+    /// Detect `cd` in a command and update _currentDir accordingly.
+    /// Handles: `cd /path`, `cd /path && ...`, `cd /path; ...`
+    /// Resolves relative paths against current _currentDir.
+    /// </summary>
+    private void UpdateCurrentDir(string command)
+    {
+        // Match cd with a path argument (absolute or relative)
+        // Handles: `cd /foo`, `cd foo`, `cd ~/foo`, `cd /foo && ...`
+        var match = System.Text.RegularExpressions.Regex.Match(
+            command, @"\bcd\s+([^\s;&|]+)");
+
+        if (!match.Success) return;
+
+        var target = match.Groups[1].Value;
+
+        // Handle tilde expansion
+        if (target.StartsWith("~/") || target == "~")
+        {
+            var homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            target = target == "~" ? homeDir : Path.Combine(homeDir, target[2..]);
+        }
+
+        // Resolve relative paths against _currentDir
+        var resolved = Path.GetFullPath(Path.Combine(_currentDir, target));
+
+        // Only update if the directory exists (don't track cd to nonexistent dirs)
+        if (Directory.Exists(resolved))
+            _currentDir = resolved;
     }
 
     /// <summary>Write content to file. Creates parent directories. No parsing (Rule #3).</summary>

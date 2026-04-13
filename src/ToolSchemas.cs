@@ -8,16 +8,16 @@ namespace LittleHelper;
 /// </summary>
 public static class ToolSchemas
 {
-    // Context window thresholds for description tiers
-    private const int SmallModelThreshold = 16384;
 
     /// <summary>
     /// Register the standard tool schemas with a ModelClient.
-    /// Uses abbreviated descriptions for small models (context window &lt; 16K or ≤ 8B params).
+    /// Uses abbreviated descriptions for small models (<=14B params).
+    /// Note: "run" is intentionally NOT registered — models use "bash" instead.
+    /// If a model calls "run" anyway, ToolExecutor handles it as a bash alias.
     /// </summary>
     public static void RegisterAll(IModelClient client, int contextWindow = 32768, string modelName = "")
     {
-        var small = contextWindow < SmallModelThreshold || IsSmallModelName(modelName);
+        var small = IsSmallModelName(modelName);
 
         // Tool 1: read
         client.RegisterTool("read",
@@ -34,14 +34,14 @@ public static class ToolSchemas
             }
             """));
 
-        // Tool 2: run
-        client.RegisterTool("run",
-            small ? "Run a shell command." : "Execute a shell command in the working directory.",
+        // Tool 2: bash (the only shell execution tool exposed to models)
+        client.RegisterTool("bash",
+            small ? "Run a bash command." : "Execute a bash command in the working directory. Current directory persists across calls.",
             NormalizeToolSchema("""
             {
                 "type": "object",
                 "properties": {
-                    "command": { "type": "string", "description": "Shell command to execute" },
+                    "command": { "type": "string", "description": "Bash command to execute" },
                     "timeout": { "type": "integer", "description": "Timeout in seconds (default: 60)" }
                 },
                 "required": ["command"]
@@ -62,7 +62,7 @@ public static class ToolSchemas
             }
             """));
 
-        // Tool 3b: edit (also aliased as "patch")
+        // Tool 4: edit (also aliased as "patch")
         // Prefer edit over write for existing files -- saves context window
         client.RegisterTool("edit",
             small ? "Edit a file by replacing text." :
@@ -80,7 +80,7 @@ public static class ToolSchemas
             }
             """));
 
-        // Tool 4: search
+        // Tool 5: search
         client.RegisterTool("search",
             small ? "Search files with grep." : "Search file contents with grep/ripgrep.",
             NormalizeToolSchema("""
@@ -92,20 +92,6 @@ public static class ToolSchemas
                     "file_type": { "type": "string", "description": "Optional file extension filter (e.g., 'cs', 'py')" }
                 },
                 "required": ["pattern"]
-            }
-            """));
-
-        // Tool 5: bash (alias for run — some models prefer this name)
-        client.RegisterTool("bash",
-            small ? "Run a bash command." : "Execute a bash command. Same as 'run'.",
-            NormalizeToolSchema("""
-            {
-                "type": "object",
-                "properties": {
-                    "command": { "type": "string", "description": "Bash command to execute" },
-                    "timeout": { "type": "integer", "description": "Timeout in seconds (default: 60)" }
-                },
-                "required": ["command"]
             }
             """));
 
@@ -186,7 +172,8 @@ public static class ToolSchemas
     }
 
     /// <summary>
-    /// Check if a model name indicates ≤ 8B parameters (e.g. "qwen3:4b", "llama3.1:8b", "phi-3.5:3.8b").
+    /// Check if a model name indicates <=14B parameters (e.g. "qwen3:4b", "llama3.1:8b", "phi-3.5:3.8b").
+    /// Used to select abbreviated tool descriptions for small models.
     /// </summary>
     private static bool IsSmallModelName(string modelName)
     {
@@ -195,7 +182,7 @@ public static class ToolSchemas
         var match = System.Text.RegularExpressions.Regex.Match(name, @"(\d+(?:\.\d+)?)\s*b");
         if (!match.Success) return false;
         if (double.TryParse(match.Groups[1].Value, out var billions))
-            return billions <= 8.0;
+            return billions <= 14.0;
         return false;
     }
 }

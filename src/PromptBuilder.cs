@@ -18,57 +18,27 @@ public class PromptBuilder
     private readonly AgentConfig _config;
     private readonly SkillDiscovery _skills;
 
-    // Context window tiers for prompt compression
-    private const int SmallModelThreshold = 16384;  // < 16K: stripped prompt
-    private const int TinyModelThreshold = 8192;    // < 8K: minimal prompt
+    // Model size thresholds for prompt tiering (parameter count in billions)
+    // Research-backed: tiny models need stripped prompts, large models can use full context.
+    // Bench data: Tiny best for <=14B, Small best for 14-35B, Full for >35B.
+    private const double TinyModelMaxB = 14.0;    // <= 14B: minimal prompt, no rationales
+    private const double SmallModelMaxB = 35.0;   // <= 35B: principles with rationales, no batch hint
 
-    // Default to full prompts. Only use compressed prompts if:
-    // 1. Model name indicates small size (e.g., "4b", "8b") OR
-    // 2. Context window is explicitly small AND model name doesn't indicate large size
-    private bool IsSmallModel => IsModelSizeSmall() ||
-        (_config.MaxContextTokens < SmallModelThreshold && !IsModelSizeLarge());
-
-    private bool IsTinyModel => IsModelSizeTiny() ||
-        (_config.MaxContextTokens < TinyModelThreshold && !IsModelSizeLarge());
+    private bool IsTinyModel => IsModelSizeAtMost(TinyModelMaxB);
+    private bool IsSmallModel => IsModelSizeAtMost(SmallModelMaxB);
 
     /// <summary>
-    /// Check if the model name contains a parameter count ≤ 8B (e.g. "qwen3:4b", "llama3.1:8b").
-    /// Models this small need stripped prompts.
+    /// Check if the model name indicates a parameter count at or below the given threshold.
+    /// Matches patterns like "qwen3:14b", "llama3.1:8b", "qwen3.5:35b", "gemma3:4b".
+    /// Models without a B suffix (frontier/proprietary) default to Full tier.
     /// </summary>
-    private bool IsModelSizeTiny()
+    private bool IsModelSizeAtMost(double maxBillions)
     {
         var name = _config.ModelName.ToLowerInvariant();
         var match = System.Text.RegularExpressions.Regex.Match(name, @"(\d+(?:\.\d+)?)\s*b");
         if (!match.Success) return false;
         if (double.TryParse(match.Groups[1].Value, out var billions))
-            return billions <= 8.0;
-        return false;
-    }
-
-    /// <summary>
-    /// Check if the model name indicates small size (≤ 16B).
-    /// </summary>
-    private bool IsModelSizeSmall()
-    {
-        var name = _config.ModelName.ToLowerInvariant();
-        var match = System.Text.RegularExpressions.Regex.Match(name, @"(\d+(?:\.\d+)?)\s*b");
-        if (!match.Success) return false;
-        if (double.TryParse(match.Groups[1].Value, out var billions))
-            return billions <= 16.0;
-        return false;
-    }
-
-    /// <summary>
-    /// Check if the model name contains a parameter count > 16B (e.g. "70b", "405b").
-    /// Models this large get full prompts even with smaller context windows.
-    /// </summary>
-    private bool IsModelSizeLarge()
-    {
-        var name = _config.ModelName.ToLowerInvariant();
-        var match = System.Text.RegularExpressions.Regex.Match(name, @"(\d+(?:\.\d+)?)\s*b");
-        if (!match.Success) return false;
-        if (double.TryParse(match.Groups[1].Value, out var billions))
-            return billions > 16.0;
+            return billions <= maxBillions;
         return false;
     }
 
@@ -138,26 +108,15 @@ public class PromptBuilder
         // Tool guidance
         if (IsTinyModel)
         {
-            sb.AppendLine("Tools: read, run, write, edit, search.");
+            sb.AppendLine("Tools: read, bash, write, edit, search.");
             sb.AppendLine("When done, respond without tool calls.");
         }
         else
         {
-            sb.AppendLine("You have access to these tools: read, run, write, edit, search, bash.");
+            sb.AppendLine("You have access to these tools: read, bash, write, edit, search.");
             sb.AppendLine("Use them to complete the task. When done, respond without tool calls.");
         }
         sb.AppendLine();
-
-        // Batch scripting guidance — only for models with enough context to benefit
-        if (!IsSmallModel)
-        {
-            sb.AppendLine("Efficiency: When you need multiple pieces of information or need to perform");
-            sb.AppendLine("several operations, write a short Python or shell script and run it with the");
-            sb.AppendLine("run tool. One script call is better than many separate tool calls — it saves");
-            sb.AppendLine("round-trips and keeps context clean. Example: instead of 3 separate search");
-            sb.AppendLine("calls, write a script that does grep + wc + sort in one shot.");
-            sb.AppendLine();
-        }
 
         // Working directory context
         sb.AppendLine($"Working directory: {_config.WorkingDirectory}");
