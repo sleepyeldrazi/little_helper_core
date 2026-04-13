@@ -113,8 +113,9 @@ class Program
 
     static void HandleSkillsCommand()
     {
+        SkillDiscovery.SeedDefaults(ResolveBundledSkillsDir());
         var skills = new SkillDiscovery();
-        skills.Discover(Directory.GetCurrentDirectory(), ResolveBundledSkillsDir());
+        skills.Discover(Directory.GetCurrentDirectory());
 
         Console.WriteLine("Available skills:");
         Console.WriteLine();
@@ -251,8 +252,9 @@ class Program
 
         try
         {
+            SkillDiscovery.SeedDefaults(ResolveBundledSkillsDir());
             var skills = new SkillDiscovery();
-            skills.Discover(config.WorkingDirectory, ResolveBundledSkillsDir());
+            skills.Discover(config.WorkingDirectory);
 
             using IModelClient modelClient = CreateModelClient(resolved);
 

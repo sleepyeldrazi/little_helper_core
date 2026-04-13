@@ -277,4 +277,65 @@ public class ToolsTests
             await executor.Execute("edit",
                 JsonDocument.Parse("{\"path\": \"../../tmp/evil.txt\", \"old_string\": \"x\", \"new_string\": \"y\"}").RootElement));
     }
+
+    [Fact]
+    public async Task Edit_WhitespaceNormalization_WrongIndent()
+    {
+        var executor = CreateExecutor();
+        // File has 4-space indent
+        var filePath = Path.Combine(_testDir, "code.py");
+        await File.WriteAllTextAsync(filePath, "def foo():\n    x = 1\n    y = 2\n    return x + y\n");
+
+        // Model provides old_string without indent (normalization will match the file's actual text)
+        // Replacement is the model's text verbatim (no auto-indent on new_string)
+        var result = await executor.Execute("edit",
+            JsonDocument.Parse("{\"path\": \"code.py\", \"old_string\": \"x = 1\\ny = 2\", \"new_string\": \"x = 42\\ny = 99\"}").RootElement);
+
+        Assert.False(result.IsError);
+        var content = await File.ReadAllTextAsync(filePath);
+        // The file's 4-space-indented lines were replaced with the model's no-indent text
+        Assert.Contains("x = 42", content);
+        Assert.Contains("y = 99", content);
+        // Unchanged line keeps its indent
+        Assert.Contains("    return x + y", content);
+    }
+
+    [Fact]
+    public async Task Edit_WhitespaceNormalization_TabsVsSpaces()
+    {
+        var executor = CreateExecutor();
+        // File uses tabs
+        var filePath = Path.Combine(_testDir, "config.yml");
+        await File.WriteAllTextAsync(filePath, "server:\n\tport: 8080\n\thost: localhost\n");
+
+        // Model provides spaces instead of tabs
+        var result = await executor.Execute("edit",
+            JsonDocument.Parse("{\"path\": \"config.yml\", \"old_string\": \"port: 8080\", \"new_string\": \"port: 9090\"}").RootElement);
+
+        Assert.False(result.IsError);
+        var content = await File.ReadAllTextAsync(filePath);
+        Assert.Contains("\tport: 9090", content);
+        Assert.Contains("\thost: localhost", content);
+    }
+
+    [Fact]
+    public async Task Edit_WhitespaceNormalization_PicksFirstNormalizedMatch()
+    {
+        var executor = CreateExecutor();
+        // File has two similar but whitespace-different blocks
+        var filePath = Path.Combine(_testDir, "dup.py");
+        await File.WriteAllTextAsync(filePath, "def foo():\n    x = 1\n    return x\n\ndef bar():\n  x = 1\n  return x\n");
+
+        // Model searches for "x = 1\n    return" (4 spaces before return) but file has
+        // different whitespace. Exact match won't find it, but normalized will match first block.
+        var result = await executor.Execute("edit",
+            JsonDocument.Parse("{\"path\": \"dup.py\", \"old_string\": \"x = 1\\nreturn x\", \"new_string\": \"x = 42\\nreturn x\"}").RootElement);
+
+        Assert.False(result.IsError, $"Unexpected error: {result.Output}");
+        var content = await File.ReadAllTextAsync(filePath);
+        // The matched text (4-space indented lines) was replaced with model's text (no indent)
+        Assert.Contains("x = 42", content);
+        Assert.Contains("return x", content);
+        Assert.Contains("  x = 1", content);  // second block untouched
+    }
 }

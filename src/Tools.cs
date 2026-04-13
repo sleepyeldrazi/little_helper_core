@@ -325,6 +325,9 @@ public class ToolExecutor
     /// Edit a file by replacing old_string with new_string.
     /// old_string must be unique in the file (fails if ambiguous).
     /// Use replace_all for non-unique matches. More efficient than rewrite for small changes.
+    ///
+    /// Whitespace normalization: if exact match fails, tries matching with leading/trailing
+    /// whitespace stripped per line. Uses the file's actual whitespace for the replacement.
     /// </summary>
     private async Task<ToolResult> Edit(JsonElement args)
     {
@@ -344,8 +347,22 @@ public class ToolExecutor
         {
             var content = await File.ReadAllTextAsync(path);
 
-            // Check if old_string exists in file
-            if (!content.Contains(oldString))
+            // Try exact match first
+            bool matched = content.Contains(oldString);
+            string matchedString = oldString;
+
+            // If exact match fails, try whitespace-normalized match
+            if (!matched)
+            {
+                var normalized = TryNormalizeMatch(content, oldString);
+                if (normalized != null)
+                {
+                    matched = true;
+                    matchedString = normalized; // Use the file's actual text (with its whitespace)
+                }
+            }
+
+            if (!matched)
             {
                 // Try to help with a fuzzy hint
                 var searchLines = oldString.Split('\n', StringSplitOptions.RemoveEmptyEntries);
@@ -378,7 +395,7 @@ public class ToolExecutor
             // Check uniqueness (unless replace_all)
             if (!replaceAll)
             {
-                var count = CountOccurrences(content, oldString);
+                var count = CountOccurrences(content, matchedString);
                 if (count > 1)
                 {
                     return new ToolResult(
@@ -390,10 +407,10 @@ public class ToolExecutor
                 }
             }
 
-            // Perform replacement
+            // Perform replacement using matchedString (file's actual whitespace)
             var newContent = replaceAll
-                ? content.Replace(oldString, newString)
-                : ReplaceFirst(content, oldString, newString);
+                ? content.Replace(matchedString, newString)
+                : ReplaceFirst(content, matchedString, newString);
 
             await File.WriteAllTextAsync(path, newContent);
 
@@ -434,6 +451,83 @@ public class ToolExecutor
     {
         var pos = text.IndexOf(oldString, StringComparison.Ordinal);
         return pos < 0 ? text : string.Concat(text.AsSpan(0, pos), newString, text.AsSpan(pos + oldString.Length));
+    }
+
+    /// <summary>
+    /// Try to find old_string in content with whitespace-normalized matching.
+    /// Strips leading whitespace per line from both the search string and the file,
+    /// then if a match is found, returns the file's actual text (with its whitespace).
+    /// Returns null if no match found.
+    ///
+    /// This handles the common case where the model indents old_string differently
+    /// than the file (tabs vs spaces, different indent depth). The edit replaces
+    /// the file's actual text, preserving its indentation style.
+    /// </summary>
+    private static string? TryNormalizeMatch(string content, string oldString)
+    {
+        // Normalize: strip carriage returns, then strip leading+trailing whitespace per line
+        static string Normalize(string s)
+        {
+            var noCr = s.Replace("\r\n", "\n").Replace('\r', '\n');
+            return string.Join("\n", noCr.Split('\n').Select(l => l.Trim()));
+        }
+
+        var normalizedContent = Normalize(content);
+        var normalizedOld = Normalize(oldString);
+
+        if (normalizedContent == normalizedOld || !normalizedContent.Contains(normalizedOld))
+            return null;
+
+        // Find where in the normalized content the match starts
+        var normIdx = normalizedContent.IndexOf(normalizedOld, StringComparison.Ordinal);
+        if (normIdx < 0) return null;
+
+        // Map back to original content by tracking character positions
+        var contentLines = content.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        var normLines = normalizedContent.Split('\n');
+        var oldLines = normalizedOld.Split('\n');
+        var oldLineCount = oldLines.Length;
+
+        // Find the starting line in normalized content
+        var charPos = 0;
+        int startNormLine = -1;
+        for (int i = 0; i < normLines.Length; i++)
+        {
+            if (charPos == normIdx)
+            {
+                startNormLine = i;
+                break;
+            }
+            charPos += normLines[i].Length + 1; // +1 for \n
+        }
+
+        // Fallback: line-by-line scan (handles off-by-one from trimmed whitespace length diff)
+        if (startNormLine < 0)
+        {
+            for (int i = 0; i <= normLines.Length - oldLineCount; i++)
+            {
+                bool allMatch = true;
+                for (int j = 0; j < oldLineCount; j++)
+                {
+                    if (normLines[i + j] != oldLines[j])
+                    {
+                        allMatch = false;
+                        break;
+                    }
+                }
+                if (allMatch)
+                {
+                    startNormLine = i;
+                    break;
+                }
+            }
+        }
+
+        if (startNormLine < 0) return null;
+
+        // Extract the actual lines from the original content (preserving whitespace)
+        var matchedLines = contentLines.Skip(startNormLine).Take(oldLineCount);
+        return string.Join("\n", matchedLines);
     }
 
     /// <summary>Search file contents with grep/ripgrep. Limited to 200 results.</summary>

@@ -6,6 +6,9 @@ namespace LittleHelper;
 /// <summary>
 /// Skill discovery and formatting. Not execution — skills are prompt injection.
 /// Scans SKILL.md files, parses frontmatter, formats the XML block for the system prompt.
+///
+/// Default skills are seeded (copied) to ~/.little_helper/skills/ on first run.
+/// After that, the user owns them — edit, delete, or add new ones freely.
 /// </summary>
 public class SkillDiscovery
 {
@@ -14,38 +17,74 @@ public class SkillDiscovery
     /// <summary>Discovered skills, ordered by name.</summary>
     public IReadOnlyList<SkillDef> Skills => _skills;
 
-    /// <summary>Discover all skills from bundled, user-level and project-level directories.</summary>
-    public void Discover(string? projectDir = null, string? bundledDir = null)
+    /// <summary>User skills directory: ~/.little_helper/skills/</summary>
+    public static string UserSkillsDir => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        ".little_helper", "skills");
+
+    /// <summary>Discover all skills from user-level and project-level directories.</summary>
+    public void Discover(string? projectDir = null)
     {
         _skills.Clear();
 
-        // Bundled skills (lowest priority)
-        if (bundledDir != null && Directory.Exists(bundledDir))
-        {
-            ScanDirectory(bundledDir);
-        }
-
         // User-level skills: ~/.little_helper/skills/
-        var userDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".little_helper", "skills");
-        ScanDirectory(userDir);
+        ScanDirectory(UserSkillsDir);
 
-        // Project-level skills: .little_helper/skills/ (highest priority)
+        // Project-level skills: .little_helper/skills/ (highest priority, overrides user)
         if (projectDir != null)
         {
             var projDir = Path.Combine(projectDir, ".little_helper", "skills");
             ScanDirectory(projDir);
         }
 
-        // Deduplicate: later directories override earlier by name
+        // Deduplicate: project overrides user by name
         _skills.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
+    /// Seed default skills from bundled directory to ~/.little_helper/skills/.
+    /// Only copies skills that don't already exist — never overwrites user edits.
+    /// </summary>
+    public static void SeedDefaults(string bundledDir)
+    {
+        if (!Directory.Exists(bundledDir))
+            return;
+
+        Directory.CreateDirectory(UserSkillsDir);
+
+        foreach (var skillDir in Directory.GetDirectories(bundledDir))
+        {
+            var skillFile = Path.Combine(skillDir, "SKILL.md");
+            if (!File.Exists(skillFile))
+                continue;
+
+            var skillName = Path.GetFileName(skillDir);
+            var targetDir = Path.Combine(UserSkillsDir, skillName);
+            var targetFile = Path.Combine(targetDir, "SKILL.md");
+
+            // Only seed if the skill doesn't already exist
+            if (!File.Exists(targetFile))
+            {
+                Directory.CreateDirectory(targetDir);
+                File.Copy(skillFile, targetFile);
+
+                // Copy any supporting files (references, templates, scripts, assets)
+                foreach (var file in Directory.GetFiles(skillDir, "*", SearchOption.AllDirectories))
+                {
+                    if (file == skillFile) continue;
+                    var relative = Path.GetRelativePath(skillDir, file);
+                    var target = Path.Combine(targetDir, relative);
+                    Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                    File.Copy(file, target);
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// Format the available_skills XML block for the system prompt.
-/// Model reads skill files with the read tool when it needs them.
-/// </summary>
+    /// Model reads skill files with the read tool when it needs them.
+    /// </summary>
     public string FormatSkillsBlock()
     {
         if (_skills.Count == 0)
